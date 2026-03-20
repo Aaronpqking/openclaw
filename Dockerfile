@@ -195,7 +195,7 @@ RUN --mount=type=cache,id=openclaw-bookworm-apt-cache,target=/var/cache/apt,shar
 # so we compile a matching binary in a dedicated Go build stage.
 ARG OPENCLAW_INSTALL_GOG=""
 COPY --from=gog-build /out/gog /tmp/gog
-RUN if [ -n "$OPENCLAW_INSTALL_GOG" ]; then \
+RUN if [ "$OPENCLAW_INSTALL_GOG" = "1" ]; then \
       install -m 0755 /tmp/gog /usr/local/bin/gog; \
     fi && \
     rm -f /tmp/gog
@@ -207,7 +207,7 @@ RUN if [ -n "$OPENCLAW_INSTALL_GOG" ]; then \
 ARG OPENCLAW_INSTALL_BROWSER=""
 RUN --mount=type=cache,id=openclaw-bookworm-apt-cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,id=openclaw-bookworm-apt-lists,target=/var/lib/apt,sharing=locked \
-    if [ -n "$OPENCLAW_INSTALL_BROWSER" ]; then \
+    if [ "$OPENCLAW_INSTALL_BROWSER" = "1" ]; then \
       apt-get update && \
       DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends xvfb && \
       mkdir -p /home/node/.cache/ms-playwright && \
