@@ -14,6 +14,7 @@
 #   Slim (bookworm-slim):    docker build --build-arg OPENCLAW_VARIANT=slim .
 ARG OPENCLAW_EXTENSIONS=""
 ARG OPENCLAW_VARIANT=default
+ARG OPENCLAW_GO_BOOKWORM_IMAGE="golang:1.25-bookworm"
 ARG OPENCLAW_NODE_BOOKWORM_IMAGE="node:24-bookworm@sha256:3a09aa6354567619221ef6c45a5051b671f953f0a1924d1f819ffb236e520e6b"
 ARG OPENCLAW_NODE_BOOKWORM_DIGEST="sha256:3a09aa6354567619221ef6c45a5051b671f953f0a1924d1f819ffb236e520e6b"
 ARG OPENCLAW_NODE_BOOKWORM_SLIM_IMAGE="node:24-bookworm-slim@sha256:e8e2e91b1378f83c5b2dd15f0247f34110e2fe895f6ca7719dbb780f929368eb"
@@ -35,6 +36,17 @@ RUN mkdir -p /out && \
         cp "/tmp/extensions/$ext/package.json" "/out/$ext/package.json"; \
       fi; \
     done
+
+FROM ${OPENCLAW_GO_BOOKWORM_IMAGE} AS gog-build
+ARG TARGETARCH
+WORKDIR /src
+RUN --mount=type=cache,id=openclaw-gog-apt-cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,id=openclaw-gog-apt-lists,target=/var/lib/apt,sharing=locked \
+    apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates git
+RUN git clone --depth=1 https://github.com/steipete/gogcli.git .
+RUN out_arch="${TARGETARCH:-$(go env GOARCH)}" && \
+    CGO_ENABLED=1 GOARCH="$out_arch" go build -trimpath -o /out/gog ./cmd/gog
 
 # ── Stage 2: Build ──────────────────────────────────────────────
 FROM ${OPENCLAW_NODE_BOOKWORM_IMAGE} AS build
@@ -176,6 +188,17 @@ RUN --mount=type=cache,id=openclaw-bookworm-apt-cache,target=/var/cache/apt,shar
       apt-get update && \
       DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends $OPENCLAW_DOCKER_APT_PACKAGES; \
     fi
+
+# Optionally install the gog CLI for Google Workspace skill flows.
+# Build with: docker build --build-arg OPENCLAW_INSTALL_GOG=1 ...
+# Upstream now documents source builds rather than Linux release tarballs,
+# so we compile a matching binary in a dedicated Go build stage.
+ARG OPENCLAW_INSTALL_GOG=""
+COPY --from=gog-build /out/gog /tmp/gog
+RUN if [ -n "$OPENCLAW_INSTALL_GOG" ]; then \
+      install -m 0755 /tmp/gog /usr/local/bin/gog; \
+    fi && \
+    rm -f /tmp/gog
 
 # Optionally install Chromium and Xvfb for browser automation.
 # Build with: docker build --build-arg OPENCLAW_INSTALL_BROWSER=1 ...
