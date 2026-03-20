@@ -28,6 +28,13 @@ export OPENCLAW_GATEWAY_TOKEN='replace-me'
 export OPENCLAW_GATEWAY_PASSWORD='replace-me'
 ```
 
+Optional model provider keys:
+
+```bash
+export OPENAI_API_KEY='replace-me'
+export GEMINI_API_KEY='replace-me'
+```
+
 Sync and deploy:
 
 ```bash
@@ -44,6 +51,7 @@ What the script does:
 
 - syncs the current checkout to the remote host with `rsync`
 - creates remote `~/.openclaw` and `~/.openclaw/workspace`
+- writes or updates remote `~/.openclaw/secure-mvp.env`
 - validates `deploy/secure/docker-compose.secure.yml`
 - runs `docker compose up -d --build` on the host
 - enables `tailscale serve --bg --https=443 http://127.0.0.1:8080`

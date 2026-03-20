@@ -1,0 +1,27 @@
+{
+  "commands": {
+    "nativeSkills": false,
+    "bash": false,
+    "config": false,
+    "mcp": false,
+    "plugins": false,
+    "debug": false,
+    "restart": false,
+    "useAccessGroups": true
+  },
+  "browser": {
+    "evaluateEnabled": false
+  },
+  "tools": {
+    "profile": "minimal",
+    "allow": ["group:web", "browser", "nodes", "cron"],
+    "deny": ["group:fs", "group:runtime", "canvas", "gateway", "message"]
+  },
+  "skills": {
+    "allowBundled": [],
+    "load": {
+      "extraDirs": [],
+      "watch": false
+    }
+  }
+}

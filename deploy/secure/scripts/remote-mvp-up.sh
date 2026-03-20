@@ -11,6 +11,9 @@ Tailscale Serve on that host.
 
 Required local environment:
   OPENCLAW_GATEWAY_TOKEN or OPENCLAW_GATEWAY_PASSWORD
+Optional local environment:
+  OPENAI_API_KEY
+  GEMINI_API_KEY
 EOF
 }
 
@@ -40,6 +43,8 @@ quoted_remote_dir="$(quote "$remote_dir_abs")"
 quoted_remote_home="$(quote "$remote_home")"
 quoted_token="$(quote "${OPENCLAW_GATEWAY_TOKEN:-}")"
 quoted_password="$(quote "${OPENCLAW_GATEWAY_PASSWORD:-}")"
+quoted_openai="$(quote "${OPENAI_API_KEY:-}")"
+quoted_gemini="$(quote "${GEMINI_API_KEY:-}")"
 
 ssh "$host" "
   set -euo pipefail
@@ -48,14 +53,50 @@ ssh "$host" "
   docker version >/dev/null
   tailscale status >/dev/null
   mkdir -p $quoted_remote_home/.openclaw/workspace $quoted_remote_home/.openclaw
+  env_file=$quoted_remote_home/.openclaw/secure-mvp.env
+  if [ -f \"\$env_file\" ]; then
+    set -a
+    . \"\$env_file\"
+    set +a
+  fi
+  if [ -n $quoted_token ]; then
+    OPENCLAW_GATEWAY_TOKEN=$quoted_token
+  fi
+  if [ -n $quoted_password ]; then
+    OPENCLAW_GATEWAY_PASSWORD=$quoted_password
+  fi
+  if [ -n $quoted_openai ]; then
+    OPENAI_API_KEY=$quoted_openai
+  fi
+  if [ -n $quoted_gemini ]; then
+    GEMINI_API_KEY=$quoted_gemini
+  fi
+  umask 077
+  : > \"\$env_file\"
+  if [ -n \"\${OPENCLAW_GATEWAY_TOKEN:-}\" ]; then
+    printf 'OPENCLAW_GATEWAY_TOKEN=%q\n' \"\$OPENCLAW_GATEWAY_TOKEN\" >> \"\$env_file\"
+  fi
+  if [ -n \"\${OPENCLAW_GATEWAY_PASSWORD:-}\" ]; then
+    printf 'OPENCLAW_GATEWAY_PASSWORD=%q\n' \"\$OPENCLAW_GATEWAY_PASSWORD\" >> \"\$env_file\"
+  fi
+  if [ -n \"\${OPENAI_API_KEY:-}\" ]; then
+    printf 'OPENAI_API_KEY=%q\n' \"\$OPENAI_API_KEY\" >> \"\$env_file\"
+  fi
+  if [ -n \"\${GEMINI_API_KEY:-}\" ]; then
+    printf 'GEMINI_API_KEY=%q\n' \"\$GEMINI_API_KEY\" >> \"\$env_file\"
+  fi
   cd $quoted_remote_dir
   HOME=$quoted_remote_home \
-  OPENCLAW_GATEWAY_TOKEN=$quoted_token \
-  OPENCLAW_GATEWAY_PASSWORD=$quoted_password \
+  OPENCLAW_GATEWAY_TOKEN=\${OPENCLAW_GATEWAY_TOKEN:-} \
+  OPENCLAW_GATEWAY_PASSWORD=\${OPENCLAW_GATEWAY_PASSWORD:-} \
+  OPENAI_API_KEY=\${OPENAI_API_KEY:-} \
+  GEMINI_API_KEY=\${GEMINI_API_KEY:-} \
   docker compose -f deploy/secure/docker-compose.secure.yml config >/dev/null
   HOME=$quoted_remote_home \
-  OPENCLAW_GATEWAY_TOKEN=$quoted_token \
-  OPENCLAW_GATEWAY_PASSWORD=$quoted_password \
+  OPENCLAW_GATEWAY_TOKEN=\${OPENCLAW_GATEWAY_TOKEN:-} \
+  OPENCLAW_GATEWAY_PASSWORD=\${OPENCLAW_GATEWAY_PASSWORD:-} \
+  OPENAI_API_KEY=\${OPENAI_API_KEY:-} \
+  GEMINI_API_KEY=\${GEMINI_API_KEY:-} \
   docker compose -f deploy/secure/docker-compose.secure.yml up -d --build
   tailscale serve --bg --https=443 http://127.0.0.1:8080
   tailscale serve status
