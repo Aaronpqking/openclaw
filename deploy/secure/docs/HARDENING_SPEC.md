@@ -69,6 +69,12 @@ MVP keeps OpenClaw native auth in place and does not move the browser identity b
 
 V1.1 moves to trusted-proxy only after the topology is changed so `gateway.trustedProxies` is technically correct.
 
+## Remote deployment note
+
+For the MVP stack, a plain remote Docker context is not sufficient by itself because the secure compose file uses bind mounts for nginx config and durable state. Bind mounts resolve on the Docker daemon host, not on the client machine.
+
+Use the remote SSH deployment path in `deploy/secure/docs/REMOTE_DEPLOY.md` instead. It syncs the repo to the Linux host first and then runs the secure compose file there, which keeps the current trust boundaries intact and avoids surprises around missing bind-mounted files.
+
 ## V1.1 topology decision
 
 V1.1 uses host nginx rather than a containerized nginx proxy. The separate decision note is in `deploy/secure/docs/V1_1_DECISION.md`.

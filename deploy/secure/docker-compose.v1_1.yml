@@ -19,7 +19,6 @@ services:
       - /run:rw,noexec,nosuid,nodev,size=16m
     security_opt:
       - no-new-privileges:true
-      - seccomp=default
       - apparmor=docker-default
     cap_drop:
       - ALL

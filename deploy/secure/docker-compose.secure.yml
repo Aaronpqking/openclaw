@@ -20,7 +20,6 @@ services:
       - /run:rw,noexec,nosuid,nodev,size=16m
     security_opt:
       - no-new-privileges:true
-      - seccomp=default
       - apparmor=docker-default
     cap_drop:
       - ALL
@@ -50,10 +49,13 @@ services:
       - /var/run:rw,noexec,nosuid,nodev,size=16m
     security_opt:
       - no-new-privileges:true
-      - seccomp=default
       - apparmor=docker-default
     cap_drop:
       - ALL
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
     ports:
       - "127.0.0.1:8080:8080"
     volumes:
