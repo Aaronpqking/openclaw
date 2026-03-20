@@ -1,0 +1,10 @@
+{
+  "gateway": {
+    "controlUi": {
+      "allowedOrigins": ["https://YOUR-TAILSCALE-NAME.ts.net"]
+    },
+    "auth": {
+      "allowTailscale": false
+    }
+  }
+}

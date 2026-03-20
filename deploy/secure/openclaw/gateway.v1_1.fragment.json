@@ -1,0 +1,18 @@
+{
+  "gateway": {
+    "bind": "loopback",
+    "trustedProxies": ["127.0.0.1", "::1"],
+    "controlUi": {
+      "allowedOrigins": ["https://openclaw.example.com"]
+    },
+    "auth": {
+      "mode": "trusted-proxy",
+      "allowTailscale": false,
+      "trustedProxy": {
+        "userHeader": "x-auth-request-email",
+        "requiredHeaders": ["x-forwarded-proto", "x-forwarded-host", "x-forwarded-for"],
+        "allowUsers": ["admin@example.com"]
+      }
+    }
+  }
+}
