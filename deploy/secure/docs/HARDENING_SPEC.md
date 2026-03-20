@@ -40,6 +40,17 @@ OpenClaw is never published directly on a host interface in either path.
 5. Host-mounted `~/.openclaw` and `~/.openclaw/workspace` are durable trusted state.
 6. Plugins, skills, and marketplaces remain trusted-code surfaces and must be treated as such.
 
+## Tools and skills policy pack
+
+Use `deploy/secure/openclaw/tools-skills.zero-trust.fragment.json` for the merge-safe baseline that hardens:
+
+- command surfaces
+- browser JS-eval behavior
+- global tool allow/deny policy
+- bundled skill allowlist behavior
+
+Operator notes and optional WhatsApp/per-agent overlays are documented in `deploy/secure/docs/TOOLS_SKILLS_POLICY.md`.
+
 ## Why loopback is used even when deployed remotely
 
 The deployment is remotely reachable through Tailscale, but ingress lands on host loopback. That keeps OpenClaw off public and LAN-facing interfaces while preserving remote admin access.
@@ -123,11 +134,14 @@ Production stance for this secure path:
 - prefer an explicit `plugins.allow` allowlist for only the plugin IDs you intend to run
 - inspect plugin files on disk before enabling any non-bundled plugin
 - bundled plugins should stay disabled unless needed
+- keep bundled skills deny-by-default and only add exact reviewed skill keys to `skills.allowBundled`
+- keep `skills.load.watch=false` on hardened hosts so new local skill files do not silently appear in the next agent turn
 
 Current repo limitation:
 
 - there is no verified global config switch in this repo that disables the plugin marketplace CLI surface entirely
 - plugin installs remain an operator-controlled remote-code surface
+- there is no verified global config switch in this repo that disables managed or workspace skills entirely; `skills.allowBundled` only governs bundled skills
 
 That is a residual risk and should be addressed operationally:
 
@@ -142,14 +156,15 @@ That is a residual risk and should be addressed operationally:
 
 1. Ensure `~/.openclaw` and `~/.openclaw/workspace` exist on the host.
 2. Merge `deploy/secure/openclaw/gateway.mvp.fragment.json` into your OpenClaw config.
-3. Set `OPENCLAW_GATEWAY_TOKEN` or `OPENCLAW_GATEWAY_PASSWORD`.
-4. Start:
+3. Merge `deploy/secure/openclaw/tools-skills.zero-trust.fragment.json` into your OpenClaw config.
+4. Set `OPENCLAW_GATEWAY_TOKEN` or `OPENCLAW_GATEWAY_PASSWORD`.
+5. Start:
 
 ```bash
 docker compose -f deploy/secure/docker-compose.secure.yml up -d --build
 ```
 
-5. Verify:
+6. Verify:
 
 ```bash
 docker compose -f deploy/secure/docker-compose.secure.yml config
@@ -166,13 +181,14 @@ openclaw security audit --deep
 2. Install host nginx and your identity-aware auth helper.
 3. Copy `deploy/secure/nginx/openclaw.host.v1_1.conf` into the host nginx config and place the CSP files where the config expects them.
 4. Merge `deploy/secure/openclaw/gateway.v1_1.fragment.json` into your OpenClaw config.
-5. Start:
+5. Merge `deploy/secure/openclaw/tools-skills.zero-trust.fragment.json` into your OpenClaw config.
+6. Start:
 
 ```bash
 docker compose -f deploy/secure/docker-compose.v1_1.yml up -d --build
 ```
 
-6. Verify:
+7. Verify:
 
 ```bash
 docker compose -f deploy/secure/docker-compose.v1_1.yml config
