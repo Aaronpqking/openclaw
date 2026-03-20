@@ -6,6 +6,10 @@ Primary fragment:
 
 - `deploy/secure/openclaw/tools-skills.zero-trust.fragment.json`
 
+Optional WhatsApp + coding overlay:
+
+- `deploy/secure/openclaw/whatsapp-coding.fragment.json`
+
 ## What the fragment enforces
 
 - `tools.profile: "minimal"` starts from `session_status` only.
@@ -23,10 +27,18 @@ Primary fragment:
 - It does not disable managed or workspace skills globally. OpenClaw only exposes a bundled-skill allowlist; `~/.openclaw/skills` and `<workspace>/skills` remain a residual risk.
 - It does not hard-split `gog` into read-only versus write-capable operations. That still needs approvals and process controls.
 - It does not set `plugins.allow` because unknown plugin ids are validation errors, and install-on-demand plugins such as WhatsApp may not be present yet.
+- `tools.elevated` only changes exec placement when the agent is sandboxed; it is not a replacement for gateway or node exec approvals.
 
 ## Optional WhatsApp channel policy
 
-Apply this only after the WhatsApp plugin is installed, because unknown `channels.whatsapp` config is a validation error before plugin discovery:
+Use `deploy/secure/openclaw/whatsapp-coding.fragment.json` if you want a ready-made placeholder for:
+
+- WhatsApp owner-only inbound
+- coding-oriented file and exec tools
+- browser + nodes + cron
+- `gog` skill enablement
+
+If you prefer to merge the WhatsApp block by hand, apply it only after the WhatsApp plugin is installed, because unknown `channels.whatsapp` config is a validation error before plugin discovery:
 
 ```json5
 {
@@ -76,6 +88,8 @@ Examples:
 - `["gog"]` for Google Workspace CLI access
 - `["wacli"]` if you intentionally want the WhatsApp CLI skill
 - `["peekaboo"]` only if the host really needs screenshot capture
+
+The secure MVP compose now bakes `gog` into the secure image by default. The managed browser runtime stays opt-in via `OPENCLAW_INSTALL_BROWSER=1`, because Chromium/Xvfb materially increase image size and can fail on small VPS disks.
 
 Do not enable marketplace or third-party skills in production until they are reviewed.
 

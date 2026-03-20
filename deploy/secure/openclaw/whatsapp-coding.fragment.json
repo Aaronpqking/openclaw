@@ -1,0 +1,78 @@
+{
+  "channels": {
+    "whatsapp": {
+      "dmPolicy": "allowlist",
+      "allowFrom": ["+15551234567"],
+      "groupPolicy": "allowlist",
+      "groupAllowFrom": ["+15551234567"],
+      "groups": {
+        "*": { "requireMention": true }
+      }
+    }
+  },
+  "commands": {
+    "native": "auto",
+    "nativeSkills": false,
+    "text": true,
+    "bash": false,
+    "config": false,
+    "debug": false,
+    "restart": false,
+    "allowFrom": {
+      "whatsapp": ["+15551234567"]
+    },
+    "useAccessGroups": true
+  },
+  "tools": {
+    "profile": "minimal",
+    "allow": [
+      "group:web",
+      "group:fs",
+      "exec",
+      "process",
+      "sessions_list",
+      "sessions_history",
+      "sessions_send",
+      "sessions_spawn",
+      "session_status",
+      "browser",
+      "nodes",
+      "cron"
+    ],
+    "deny": ["gateway", "message", "canvas"],
+    "elevated": {
+      "enabled": true,
+      "allowFrom": {
+        "whatsapp": ["+15551234567"]
+      }
+    },
+    "loopDetection": {
+      "enabled": true,
+      "historySize": 30,
+      "warningThreshold": 10,
+      "criticalThreshold": 20,
+      "globalCircuitBreakerThreshold": 30,
+      "detectors": {
+        "genericRepeat": true,
+        "knownPollNoProgress": true,
+        "pingPong": true
+      }
+    }
+  },
+  "browser": {
+    "evaluateEnabled": false,
+    "ssrfPolicy": {
+      "dangerouslyAllowPrivateNetwork": false
+    }
+  },
+  "skills": {
+    "allowBundled": ["gog"],
+    "load": {
+      "extraDirs": [],
+      "watch": false
+    },
+    "entries": {
+      "gog": { "enabled": true }
+    }
+  }
+}

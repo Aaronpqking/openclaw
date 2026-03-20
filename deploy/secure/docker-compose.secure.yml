@@ -3,6 +3,9 @@ services:
     build:
       context: ../..
       dockerfile: Dockerfile
+      args:
+        OPENCLAW_INSTALL_BROWSER: ${OPENCLAW_INSTALL_BROWSER:-0}
+        OPENCLAW_INSTALL_GOG: ${OPENCLAW_INSTALL_GOG:-1}
     image: openclaw:secure-mvp
     init: true
     restart: unless-stopped
