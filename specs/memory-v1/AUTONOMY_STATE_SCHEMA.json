@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AutonomyState",
+  "type": "object",
+  "required": [
+    "project",
+    "build",
+    "phase",
+    "objective",
+    "blockers",
+    "next_actions",
+    "verification_state",
+    "authority_level",
+    "last_run_id",
+    "last_task_packet_ref",
+    "last_evidence_refs",
+    "updated_at"
+  ],
+  "properties": {
+    "project": {
+      "type": "string",
+      "enum": ["none", "openclaw", "eleanor", "eliteforms", "shared"]
+    },
+    "build": {
+      "type": "string",
+      "enum": [
+        "engine",
+        "api",
+        "ui",
+        "infra",
+        "memory",
+        "autonomy",
+        "execution",
+        "policy",
+        "trust",
+        "channels",
+        "google",
+        "whatsapp",
+        "node",
+        "release",
+        "docs",
+        "tests"
+      ]
+    },
+    "phase": {
+      "type": "string",
+      "enum": [
+        "discover",
+        "diagnose",
+        "design",
+        "plan",
+        "implement",
+        "repair",
+        "verify",
+        "report",
+        "blocked",
+        "awaiting_decision",
+        "deferred",
+        "handoff",
+        "complete"
+      ]
+    },
+    "objective": {
+      "type": "string"
+    },
+    "blockers": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "next_actions": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "verification_state": {
+      "type": "string",
+      "enum": ["not_started", "partial", "passed_scoped", "passed_live", "failed", "blocked"]
+    },
+    "authority_level": {
+      "type": "string",
+      "enum": ["T0", "T1", "T2", "T3"]
+    },
+    "last_result_json": {
+      "type": "object"
+    },
+    "last_result_text": {
+      "type": "string"
+    },
+    "last_run_id": {
+      "type": "string"
+    },
+    "last_task_packet_ref": {
+      "type": "string"
+    },
+    "last_evidence_refs": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "updated_at": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false
+}

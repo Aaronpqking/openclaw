@@ -1,0 +1,123 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TaskPacket",
+  "type": "object",
+  "required": [
+    "request_id",
+    "scope",
+    "project",
+    "build",
+    "phase",
+    "objective",
+    "allowed_actions",
+    "reply_mode"
+  ],
+  "properties": {
+    "request_id": {
+      "type": "string"
+    },
+    "run_id": {
+      "type": "string"
+    },
+    "scope": {
+      "type": "string",
+      "enum": ["global", "project"]
+    },
+    "project": {
+      "type": "string",
+      "enum": ["none", "openclaw", "eleanor", "eliteforms", "shared"]
+    },
+    "build": {
+      "type": "string",
+      "enum": [
+        "engine",
+        "api",
+        "ui",
+        "infra",
+        "memory",
+        "autonomy",
+        "execution",
+        "policy",
+        "trust",
+        "channels",
+        "google",
+        "whatsapp",
+        "node",
+        "release",
+        "docs",
+        "tests"
+      ]
+    },
+    "phase": {
+      "type": "string",
+      "enum": [
+        "discover",
+        "diagnose",
+        "design",
+        "plan",
+        "implement",
+        "repair",
+        "verify",
+        "report",
+        "blocked",
+        "awaiting_decision",
+        "deferred",
+        "handoff",
+        "complete"
+      ]
+    },
+    "objective": {
+      "type": "string"
+    },
+    "constraints": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "acceptance": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "allowed_actions": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "initiation_source": {
+      "type": "string",
+      "enum": ["operator_requested", "self_driven", "scheduled", "external_triggered"]
+    },
+    "allowed_action_scopes": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "global",
+          "cursor_workspace",
+          "operator_thread",
+          "external_runtime",
+          "tenant_surface"
+        ]
+      }
+    },
+    "reply_mode": {
+      "type": "string",
+      "enum": ["summary", "detailed", "checkpoint", "enum_only"]
+    },
+    "autonomy_mode": {
+      "type": "string",
+      "enum": ["observe", "propose", "execute_safe", "execute_bounded", "escalate"]
+    },
+    "artifact_refs": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "evidence_refs": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "report_targets": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "additionalProperties": false
+}

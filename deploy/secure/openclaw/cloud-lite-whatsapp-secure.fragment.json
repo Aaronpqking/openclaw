@@ -1,0 +1,58 @@
+{
+  "gateway": {
+    "bind": "loopback",
+    "trustedProxies": ["127.0.0.1", "::1"],
+    "controlUi": {
+      "allowedOrigins": ["https://control.example.com"]
+    },
+    "auth": {
+      "mode": "trusted-proxy",
+      "allowTailscale": false,
+      "trustedProxy": {
+        "userHeader": "x-auth-request-email",
+        "requiredHeaders": ["x-forwarded-proto", "x-forwarded-host", "x-forwarded-for"],
+        "allowUsers": ["admin@example.com"]
+      }
+    },
+    "http": {
+      "endpoints": {
+        "chatCompletions": {
+          "enabled": false
+        },
+        "responses": {
+          "enabled": true
+        }
+      }
+    }
+  },
+  "channels": {
+    "telegram": {
+      "dmPolicy": "allowlist",
+      "allowFrom": ["123456789"]
+    },
+    "whatsapp": {
+      "dmPolicy": "allowlist",
+      "allowFrom": ["+15551234567"],
+      "groupPolicy": "allowlist",
+      "groupAllowFrom": ["+15551234567"],
+      "groups": {
+        "*": {
+          "requireMention": true
+        }
+      }
+    }
+  },
+  "skills": {
+    "allowBundled": ["gog"],
+    "entries": {
+      "gog": {
+        "enabled": true
+      }
+    }
+  },
+  "plugins": {
+    "slots": {
+      "contextEngine": "control-plane"
+    }
+  }
+}
