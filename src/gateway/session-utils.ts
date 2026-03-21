@@ -725,7 +725,10 @@ function resolveGatewaySessionStoreLookup(params: {
     storePath: resolveStorePath(params.cfg.session?.store, { agentId: params.agentId }),
   };
   let selectedStorePath = fallback.storePath;
-  let selectedStore = params.initialStore ?? loadSessionStore(fallback.storePath);
+  // Always evaluate the first candidate from disk so `storePath` matches the backing file.
+  // Passing `initialStore` (often the combined gateway view) must not skip this, or transcript
+  // resolution can target the wrong sessions directory when multiple per-agent stores exist.
+  let selectedStore = loadSessionStore(fallback.storePath);
   let selectedMatch = findStoreMatch(selectedStore, ...scanTargets);
   let selectedUpdatedAt = selectedMatch?.entry.updatedAt ?? Number.NEGATIVE_INFINITY;
 
@@ -747,6 +750,14 @@ function resolveGatewaySessionStoreLookup(params: {
       selectedStore = store;
       selectedMatch = match;
       selectedUpdatedAt = updatedAt;
+    }
+  }
+
+  if (!selectedMatch && params.initialStore) {
+    selectedMatch = findStoreMatch(params.initialStore, ...scanTargets);
+    if (selectedMatch) {
+      selectedStorePath = fallback.storePath;
+      selectedStore = params.initialStore;
     }
   }
 

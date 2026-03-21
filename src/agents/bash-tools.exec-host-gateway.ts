@@ -1,4 +1,6 @@
 import type { AgentToolResult } from "@mariozechner/pi-agent-core";
+import { resolveEleanorLiteExecApprovalHints } from "../control-plane/approval.js";
+import type { TaskPacket } from "../control-plane/task-packet.js";
 import {
   addAllowlistEntry,
   type ExecAsk,
@@ -61,12 +63,76 @@ export type ProcessGatewayAllowlistParams = {
   maxOutput: number;
   pendingMaxOutput: number;
   trustedSafeBinDirs?: ReadonlySet<string>;
+  taskPacket?: TaskPacket;
 };
 
 export type ProcessGatewayAllowlistResult = {
   execCommandOverride?: string;
   pendingResult?: AgentToolResult<ExecToolDetails>;
 };
+
+function resolveTaskPacketReportRoute(params: {
+  taskPacket?: TaskPacket;
+  turnSourceChannel?: string;
+  turnSourceTo?: string;
+  turnSourceAccountId?: string;
+  turnSourceThreadId?: string | number;
+}): {
+  channel?: string;
+  to?: string;
+  accountId?: string;
+  threadId?: string | number;
+} {
+  const packet = params.taskPacket;
+  if (!packet) {
+    return {
+      channel: params.turnSourceChannel,
+      to: params.turnSourceTo,
+      accountId: params.turnSourceAccountId,
+      threadId: params.turnSourceThreadId,
+    };
+  }
+  const immediateTargets = (packet.reportTargets ?? []).filter(
+    (target) => target.immediate !== false,
+  );
+  const preferred = immediateTargets[0];
+  if (!preferred) {
+    return {
+      channel: params.turnSourceChannel,
+      to: params.turnSourceTo,
+      accountId: params.turnSourceAccountId,
+      threadId: params.turnSourceThreadId,
+    };
+  }
+  if (preferred.channel === "operator_thread") {
+    return {
+      channel: params.turnSourceChannel,
+      to: params.turnSourceTo,
+      accountId: params.turnSourceAccountId,
+      threadId: params.turnSourceThreadId,
+    };
+  }
+  if (preferred.channel === "whatsapp") {
+    return {
+      channel: "whatsapp",
+      to: preferred.target,
+      accountId: params.turnSourceAccountId,
+    };
+  }
+  if (preferred.channel === "webchat") {
+    return {
+      channel: "webchat",
+      to: preferred.target,
+      accountId: params.turnSourceAccountId,
+    };
+  }
+  return {
+    channel: params.turnSourceChannel,
+    to: params.turnSourceTo,
+    accountId: params.turnSourceAccountId,
+    threadId: params.turnSourceThreadId,
+  };
+}
 
 export async function processGatewayAllowlist(
   params: ProcessGatewayAllowlistParams,
@@ -126,7 +192,14 @@ export async function processGatewayAllowlist(
   );
   const requiresHeredocApproval =
     hostSecurity === "allowlist" && analysisOk && allowlistSatisfied && hasHeredocSegment;
-  const requiresAsk =
+  const eleanorHints = resolveEleanorLiteExecApprovalHints({
+    taskPacket: params.taskPacket,
+    defaultActionScope: "external_runtime",
+  });
+  if (eleanorHints.blockReason) {
+    throw new Error(`exec denied: ${eleanorHints.blockReason}`);
+  }
+  let requiresAsk =
     requiresExecApproval({
       ask: hostAsk,
       security: hostSecurity,
@@ -135,6 +208,18 @@ export async function processGatewayAllowlist(
     }) ||
     requiresHeredocApproval ||
     obfuscation.detected;
+  if (eleanorHints.forceRequireApproval) {
+    requiresAsk = true;
+  } else if (eleanorHints.skipApprovalPrompt) {
+    requiresAsk = false;
+  }
+  const reportRoute = resolveTaskPacketReportRoute({
+    taskPacket: params.taskPacket,
+    turnSourceChannel: params.turnSourceChannel,
+    turnSourceTo: params.turnSourceTo,
+    turnSourceAccountId: params.turnSourceAccountId,
+    turnSourceThreadId: params.turnSourceThreadId,
+  });
   if (requiresHeredocApproval) {
     params.warnings.push(
       "Warning: heredoc execution requires explicit approval in allowlist mode.",
@@ -184,11 +269,14 @@ export async function processGatewayAllowlist(
     const followupTarget = buildExecApprovalFollowupTarget({
       approvalId,
       sessionKey: params.notifySessionKey,
-      turnSourceChannel: params.turnSourceChannel,
-      turnSourceTo: params.turnSourceTo,
-      turnSourceAccountId: params.turnSourceAccountId,
-      turnSourceThreadId: params.turnSourceThreadId,
+      turnSourceChannel: reportRoute.channel,
+      turnSourceTo: reportRoute.to,
+      turnSourceAccountId: reportRoute.accountId,
+      turnSourceThreadId: reportRoute.threadId,
     });
+    const taskPacketContext = params.taskPacket
+      ? ` [task request=${params.taskPacket.requestId}${params.taskPacket.runId ? `, run=${params.taskPacket.runId}` : ""}]`
+      : "";
 
     void (async () => {
       const decision = await resolveApprovalDecisionOrUndefined({
@@ -197,7 +285,7 @@ export async function processGatewayAllowlist(
         onFailure: () =>
           void sendExecApprovalFollowupResult(
             followupTarget,
-            `Exec denied (gateway id=${approvalId}, approval-request-failed): ${params.command}`,
+            `Exec denied (gateway id=${approvalId}, approval-request-failed): ${params.command}${taskPacketContext}`,
           ),
       });
       if (decision === undefined) {
@@ -248,7 +336,7 @@ export async function processGatewayAllowlist(
       if (deniedReason) {
         await sendExecApprovalFollowupResult(
           followupTarget,
-          `Exec denied (gateway id=${approvalId}, ${deniedReason}): ${params.command}`,
+          `Exec denied (gateway id=${approvalId}, ${deniedReason}): ${params.command}${taskPacketContext}`,
         );
         return;
       }
@@ -277,7 +365,7 @@ export async function processGatewayAllowlist(
       } catch {
         await sendExecApprovalFollowupResult(
           followupTarget,
-          `Exec denied (gateway id=${approvalId}, spawn-failed): ${params.command}`,
+          `Exec denied (gateway id=${approvalId}, spawn-failed): ${params.command}${taskPacketContext}`,
         );
         return;
       }
@@ -290,8 +378,8 @@ export async function processGatewayAllowlist(
       );
       const exitLabel = outcome.timedOut ? "timeout" : `code ${outcome.exitCode ?? "?"}`;
       const summary = output
-        ? `Exec finished (gateway id=${approvalId}, session=${run.session.id}, ${exitLabel})\n${output}`
-        : `Exec finished (gateway id=${approvalId}, session=${run.session.id}, ${exitLabel})`;
+        ? `Exec finished (gateway id=${approvalId}, session=${run.session.id}, ${exitLabel})${taskPacketContext}\n${output}`
+        : `Exec finished (gateway id=${approvalId}, session=${run.session.id}, ${exitLabel})${taskPacketContext}`;
       await sendExecApprovalFollowupResult(followupTarget, summary);
     })();
 

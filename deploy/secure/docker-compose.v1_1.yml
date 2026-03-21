@@ -3,6 +3,9 @@ services:
     build:
       context: ../..
       dockerfile: Dockerfile
+      args:
+        OPENCLAW_INSTALL_BROWSER: ${OPENCLAW_INSTALL_BROWSER:-0}
+        OPENCLAW_INSTALL_GOG: ${OPENCLAW_INSTALL_GOG:-1}
     image: openclaw:secure-v1_1
     init: true
     restart: unless-stopped
@@ -10,6 +13,7 @@ services:
     command: ["node", "dist/index.js", "gateway", "--bind", "loopback", "--port", "18789"]
     environment:
       HOME: /home/node
+      XDG_CONFIG_HOME: /home/node/.openclaw/xdg-config
       TERM: xterm-256color
       OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-}
       OPENCLAW_GATEWAY_PASSWORD: ${OPENCLAW_GATEWAY_PASSWORD:-}

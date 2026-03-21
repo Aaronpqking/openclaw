@@ -83,9 +83,10 @@ function expectPendingApprovalText(
   const details = result.details as { approvalId: string; approvalSlug: string };
   const pendingText = getResultText(result);
   expect(pendingText).toContain(
-    `Reply with: /approve ${details.approvalSlug} allow-once|allow-always|deny`,
+    `Reply with: /approve ${details.approvalId} allow-once|allow-always|deny`,
   );
   expect(pendingText).toContain(`full ${details.approvalId}`);
+  expect(pendingText).toContain(`Short label: ${details.approvalSlug}`);
   expect(pendingText).toContain(`Host: ${options.host}`);
   if (options.nodeId) {
     expect(pendingText).toContain(`Node: ${options.nodeId}`);
@@ -447,6 +448,119 @@ describe("exec approvals", () => {
     );
   });
 
+  it("skips gateway approval prompts for operator-requested Eleanor task packets", async () => {
+    const calls: string[] = [];
+    mockGatewayOkCalls(calls);
+
+    const tool = createExecTool({
+      host: "gateway",
+      ask: "always",
+      security: "full",
+      approvalRunningNoticeMs: 0,
+      taskPacket: {
+        requestId: "req-eleanor-op",
+        runId: "run-eleanor-op",
+        scope: "project",
+        project: "eleanor",
+        build: "execution",
+        phase: "implement",
+        objective: "Operator-requested gateway action",
+        allowedActionScopes: ["external_runtime"],
+        replyMode: "summary",
+        initiationSource: "operator_requested",
+      },
+    });
+
+    const result = await tool.execute("call-eleanor-skip-approval", {
+      command: "echo ok",
+      workdir: process.cwd(),
+    });
+    expect(result.details.status).toBe("completed");
+    expect(calls).not.toContain("exec.approval.request");
+    expect(calls).not.toContain("exec.approval.waitDecision");
+  });
+
+  it("blocks gateway exec when task packet disallows external_runtime scope", async () => {
+    const calls: string[] = [];
+    mockGatewayOkCalls(calls);
+    const tool = createExecTool({
+      host: "gateway",
+      ask: "always",
+      security: "full",
+      approvalRunningNoticeMs: 0,
+      taskPacket: {
+        requestId: "req-eleanor-blocked",
+        scope: "project",
+        project: "eleanor",
+        build: "execution",
+        phase: "implement",
+        objective: "Blocked by scope",
+        allowedActionScopes: ["cursor_workspace"],
+        replyMode: "summary",
+        initiationSource: "operator_requested",
+      },
+    });
+
+    await expect(
+      tool.execute("call-eleanor-blocked", {
+        command: "echo ok",
+        workdir: process.cwd(),
+      }),
+    ).rejects.toThrow(/action scope external_runtime is not allowed/i);
+    expect(calls).not.toContain("exec.approval.request");
+  });
+
+  it("routes approval followup to WhatsApp report target when configured", async () => {
+    const agentCalls: Array<Record<string, unknown>> = [];
+    mockAcceptedApprovalFlow({
+      onAgent: (params) => {
+        agentCalls.push(params);
+      },
+    });
+
+    const tool = createExecTool({
+      host: "gateway",
+      ask: "always",
+      approvalRunningNoticeMs: 0,
+      sessionKey: "agent:main:main",
+      taskPacket: {
+        requestId: "req-eleanor-report",
+        runId: "run-eleanor-report",
+        scope: "project",
+        project: "eleanor",
+        build: "execution",
+        phase: "report",
+        objective: "Route followup report",
+        allowedActionScopes: ["external_runtime"],
+        replyMode: "summary",
+        initiationSource: "self_driven",
+        reportTargets: [{ channel: "whatsapp", target: "+15559998888", immediate: true }],
+      },
+      elevated: { enabled: true, allowed: true, defaultLevel: "ask" },
+    });
+
+    const result = await tool.execute("call-eleanor-report-target", {
+      command: "echo ok",
+      workdir: process.cwd(),
+      gatewayUrl: undefined,
+      gatewayToken: undefined,
+    });
+
+    expect(result.details.status).toBe("approval-pending");
+    await expect.poll(() => agentCalls.length, { timeout: 3_000, interval: 20 }).toBe(1);
+    expect(agentCalls[0]).toEqual(
+      expect.objectContaining({
+        sessionKey: "agent:main:main",
+        deliver: true,
+        channel: "whatsapp",
+        to: "+15559998888",
+      }),
+    );
+    const followupMessage = agentCalls[0]?.message;
+    expect(typeof followupMessage).toBe("string");
+    expect(followupMessage).toContain("[task request=req-eleanor-report, run=run-eleanor-report]");
+  });
+
   it("requires a separate approval for each elevated command after allow-once", async () => {
     const requestCommands: string[] = [];
     const requestIds: string[] = [];
@@ -636,7 +750,7 @@ describe("exec approvals", () => {
     });
 
     const text = expectApprovalUnavailableText(result);
-    expect(text).toContain("chat exec approvals are not enabled on Discord");
+    expect(text).toContain("Discord does not support chat exec approvals");
     expect(text).toContain("Web UI or terminal UI");
   });
 
@@ -673,7 +787,8 @@ describe("exec approvals", () => {
     });
 
     const text = expectApprovalUnavailableText(result);
-    expect(text).toContain("Approval required. I sent the allowed approvers DMs.");
+    expect(text).toContain("Telegram does not support chat exec approvals");
+    expect(text).toContain("Web UI or terminal UI");
   });
 
   it("denies node obfuscated command when approval request times out", async () => {

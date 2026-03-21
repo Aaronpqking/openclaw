@@ -16,6 +16,7 @@ import { getScopedChannelsCommandSecretTargets } from "../../cli/command-secret-
 import { resolveMessageSecretScope } from "../../cli/message-secret-scope.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import { loadConfig } from "../../config/config.js";
+import type { TaskPacket } from "../../control-plane/task-packet.js";
 import { GATEWAY_CLIENT_IDS, GATEWAY_CLIENT_MODES } from "../../gateway/protocol/client-info.js";
 import { getToolResult, runMessageAction } from "../../infra/outbound/message-action-runner.js";
 import { POLL_CREATION_PARAM_DEFS, SHARED_POLL_CREATION_PARAM_NAMES } from "../../poll-params.js";
@@ -395,6 +396,7 @@ type MessageToolOptions = {
   sandboxRoot?: string;
   requireExplicitTarget?: boolean;
   requesterSenderId?: string;
+  taskPacket?: TaskPacket;
 };
 
 function resolveMessageToolSchemaActions(params: {
@@ -777,6 +779,7 @@ export function createMessageTool(options?: MessageToolOptions): AnyAgentTool {
         sessionId: options?.sessionId,
         agentId: resolvedAgentId,
         sandboxRoot: options?.sandboxRoot,
+        taskPacket: options?.taskPacket,
         abortSignal: signal,
       });
 

@@ -327,7 +327,13 @@ export async function resolveContextEngine(config?: OpenClawConfig): Promise<Con
       ? slotValue.trim()
       : defaultSlotIdForKey("contextEngine");
 
-  const entry = getContextEngineRegistryState().engines.get(engineId);
+  const registry = getContextEngineRegistryState().engines;
+  let entry = registry.get(engineId);
+  if (!entry && engineId === "control-plane") {
+    // Backward-compatible safety net: older runtimes may only register `legacy`.
+    // Do not fail hard for control-plane slot selection if legacy is available.
+    entry = registry.get(defaultSlotIdForKey("contextEngine"));
+  }
   if (!entry) {
     throw new Error(
       `Context engine "${engineId}" is not registered. ` +

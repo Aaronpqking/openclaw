@@ -79,7 +79,7 @@ export function getExecApprovalReplyMetadata(
 export function buildExecApprovalPendingReplyPayload(
   params: ExecApprovalPendingReplyParams,
 ): ReplyPayload {
-  const approvalCommandId = params.approvalCommandId?.trim() || params.approvalSlug;
+  const approvalCommandId = params.approvalCommandId?.trim() || params.approvalId;
   const lines: string[] = [];
   const warningText = params.warningText?.trim();
   if (warningText) {

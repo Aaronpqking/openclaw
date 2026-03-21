@@ -1,4 +1,5 @@
 import { Type } from "@sinclair/typebox";
+import { TaskPacketSchema } from "./control-plane.js";
 import { ChatSendSessionKeyString, InputProvenanceSchema, NonEmptyString } from "./primitives.js";
 
 export const LogsTailParamsSchema = Type.Object(
@@ -41,6 +42,8 @@ export const ChatSendParamsSchema = Type.Object(
     timeoutMs: Type.Optional(Type.Integer({ minimum: 0 })),
     systemInputProvenance: Type.Optional(InputProvenanceSchema),
     systemProvenanceReceipt: Type.Optional(Type.String()),
+    /** Optional control-plane task packet for this turn (Eleanor Lite / autonomy routing). */
+    taskPacket: Type.Optional(TaskPacketSchema),
     idempotencyKey: NonEmptyString,
   },
   { additionalProperties: false },

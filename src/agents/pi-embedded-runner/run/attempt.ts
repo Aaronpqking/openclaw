@@ -1554,6 +1554,7 @@ export async function runEmbeddedAttempt(
             runAbortController.abort("sessions_yield");
             abortSessionForYield?.();
           },
+          taskPacket: params.taskPacket,
         });
     const toolsEnabled = supportsModelTools(params.model);
     const tools = sanitizeToolsForGoogle({

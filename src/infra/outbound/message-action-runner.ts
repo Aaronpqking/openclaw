@@ -14,6 +14,12 @@ import type {
   ChannelThreadingToolContext,
 } from "../../channels/plugins/types.js";
 import type { OpenClawConfig } from "../../config/config.js";
+import {
+  resolveApprovalPolicy,
+  resolveMessageActionClass,
+  resolveMessageActionScope,
+} from "../../control-plane/approval.js";
+import type { TaskPacket } from "../../control-plane/task-packet.js";
 import { hasInteractiveReplyBlocks, hasReplyPayloadContent } from "../../interactive/payload.js";
 import { getAgentScopedMediaLocalRoots } from "../../media/local-roots.js";
 import { hasPollCreationParams } from "../../poll-params.js";
@@ -105,6 +111,7 @@ export type RunMessageActionParams = {
   sandboxRoot?: string;
   dryRun?: boolean;
   abortSignal?: AbortSignal;
+  taskPacket?: TaskPacket;
 };
 
 export type MessageActionRunResult =
@@ -726,6 +733,18 @@ export async function runMessageAction(
 
   const action = input.action;
   if (action === "broadcast") {
+    if (input.taskPacket?.project === "eleanor") {
+      const approval = resolveApprovalPolicy({
+        initiationSource: input.taskPacket.initiationSource ?? "external_triggered",
+        actionScope: "external_runtime",
+        actionClass: resolveMessageActionClass(action),
+        allowedActionScopes: input.taskPacket.allowedActionScopes,
+        reportTargets: input.taskPacket.reportTargets,
+      });
+      if (!approval.allowed || approval.deliveryState === "approval_required") {
+        throw new Error(`message action requires approval: ${approval.reason}`);
+      }
+    }
     return handleBroadcastAction(input, params);
   }
   params = normalizeMessageActionInput({
@@ -775,6 +794,24 @@ export async function runMessageAction(
     args: params,
     accountId,
   });
+
+  if (input.taskPacket?.project === "eleanor") {
+    const approval = resolveApprovalPolicy({
+      initiationSource: input.taskPacket.initiationSource ?? "external_triggered",
+      actionScope: resolveMessageActionScope({
+        taskPacket: input.taskPacket,
+        channel,
+        target:
+          readStringParam(params, "to") ?? readStringParam(params, "target") ?? resolvedTarget?.to,
+      }),
+      actionClass: resolveMessageActionClass(action),
+      allowedActionScopes: input.taskPacket.allowedActionScopes,
+      reportTargets: input.taskPacket.reportTargets,
+    });
+    if (!approval.allowed || approval.deliveryState === "approval_required") {
+      throw new Error(`message action requires approval: ${approval.reason}`);
+    }
+  }
 
   enforceCrossContextPolicy({
     channel,

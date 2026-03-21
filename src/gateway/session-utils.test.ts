@@ -235,6 +235,31 @@ describe("gateway session utils", () => {
     expect(found).toBe(true);
   });
 
+  test("resolveGatewaySessionStoreTarget matches on-disk store path when initialStore is combined", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "session-utils-combined-"));
+    const storePath = path.join(dir, "sessions.json");
+    fs.writeFileSync(
+      storePath,
+      JSON.stringify({
+        "agent:ops:main": { sessionId: "sess-1", updatedAt: 5 },
+      }),
+      "utf8",
+    );
+    const cfg = {
+      session: { mainKey: "main", store: storePath },
+      agents: { list: [{ id: "ops", default: true }] },
+    } as OpenClawConfig;
+    const combined = JSON.parse(fs.readFileSync(storePath, "utf8")) as Record<string, SessionEntry>;
+    const withoutCombined = resolveGatewaySessionStoreTarget({ cfg, key: "main" });
+    const withCombined = resolveGatewaySessionStoreTarget({
+      cfg,
+      key: "main",
+      store: combined,
+    });
+    expect(withCombined.storePath).toBe(withoutCombined.storePath);
+    expect(withCombined.canonicalKey).toBe(withoutCombined.canonicalKey);
+  });
+
   test("resolveGatewaySessionStoreTarget includes all case-variant duplicate keys", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "session-utils-dupes-"));
     const storePath = path.join(dir, "sessions.json");

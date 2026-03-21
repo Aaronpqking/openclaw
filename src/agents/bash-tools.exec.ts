@@ -450,6 +450,7 @@ export function createExecTool(
           maxOutput,
           pendingMaxOutput,
           trustedSafeBinDirs,
+          taskPacket: defaults?.taskPacket,
         });
         if (gatewayResult.pendingResult) {
           return gatewayResult.pendingResult;
