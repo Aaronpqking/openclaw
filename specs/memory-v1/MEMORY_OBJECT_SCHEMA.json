@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MemoryObject",
+  "type": "object",
+  "required": [
+    "memory_id",
+    "memory_class",
+    "domain",
+    "key",
+    "task_packet_ref",
+    "run_id",
+    "evidence_refs",
+    "source_refs",
+    "retrieval_default",
+    "created_at",
+    "updated_at"
+  ],
+  "properties": {
+    "memory_id": {
+      "type": "string"
+    },
+    "memory_class": {
+      "type": "string",
+      "enum": ["ephemeral", "operational", "durable", "sensitive", "audit"]
+    },
+    "domain": {
+      "type": "string"
+    },
+    "key": {
+      "type": "string"
+    },
+    "inline_value_json": {
+      "type": "object"
+    },
+    "value_ref": {
+      "type": "string"
+    },
+    "summary_ref": {
+      "type": "string"
+    },
+    "task_packet_ref": {
+      "type": "string"
+    },
+    "run_id": {
+      "type": "string"
+    },
+    "evidence_refs": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "source_refs": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "trust_boundary": {
+      "type": "string",
+      "enum": [
+        "none",
+        "project_only",
+        "operator_only",
+        "family",
+        "public",
+        "secret",
+        "health",
+        "finance"
+      ]
+    },
+    "retrieval_default": {
+      "type": "boolean"
+    },
+    "purpose_tags": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "supersedes": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "created_at": {
+      "type": "string"
+    },
+    "updated_at": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "anyOf": [
+    {
+      "required": ["inline_value_json"]
+    },
+    {
+      "required": ["value_ref"]
+    }
+  ]
+}

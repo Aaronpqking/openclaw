@@ -13,7 +13,7 @@ Optional WhatsApp + coding overlay:
 ## What the fragment enforces
 
 - `tools.profile: "minimal"` starts from `session_status` only.
-- `tools.allow` re-adds only `group:web`, `browser`, `nodes`, and `cron`.
+- `tools.alsoAllow` adds reviewed tools on top of the `minimal` profile without collapsing the toolset to `session_status`.
 - `tools.deny` blocks filesystem mutation/read tools, runtime shell tools, `canvas`, `gateway`, and `message`.
 - `browser.evaluateEnabled: false` disables browser JS eval and `wait --fn`.
 - `commands.nativeSkills: false` disables native skill command registration.
@@ -34,9 +34,16 @@ Optional WhatsApp + coding overlay:
 Use `deploy/secure/openclaw/whatsapp-coding.fragment.json` if you want a ready-made placeholder for:
 
 - WhatsApp owner-only inbound
-- coding-oriented file and exec tools
-- browser + nodes + cron
+- coding-oriented file, memory, and exec tools
+- browser access
 - `gog` skill enablement
+- a tool policy that actually composes with `tools.profile: "minimal"`
+
+Important:
+
+- `tools.allow` is an allow-only filter applied after `tools.profile`.
+- If you start from `tools.profile: "minimal"`, then `tools.allow` cannot re-add tools that the profile already removed.
+- Use `tools.alsoAllow` for additive enablement on top of a profile, or switch to `tools.profile: "coding"` if you want the full coding baseline.
 
 If you prefer to merge the WhatsApp block by hand, apply it only after the WhatsApp plugin is installed, because unknown `channels.whatsapp` config is a validation error before plugin discovery:
 

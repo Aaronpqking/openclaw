@@ -14,7 +14,7 @@
   },
   "tools": {
     "profile": "minimal",
-    "allow": ["group:web", "browser", "nodes", "cron"],
+    "alsoAllow": ["group:web", "browser", "nodes", "cron"],
     "deny": ["group:fs", "group:runtime", "canvas", "gateway", "message"]
   },
   "skills": {

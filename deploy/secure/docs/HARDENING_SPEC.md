@@ -136,6 +136,7 @@ Production stance for this secure path:
 - bundled plugins should stay disabled unless needed
 - keep bundled skills deny-by-default and only add exact reviewed skill keys to `skills.allowBundled`
 - keep `skills.load.watch=false` on hardened hosts so new local skill files do not silently appear in the next agent turn
+- when starting from `tools.profile: "minimal"`, use `tools.alsoAllow` for additive capabilities; `tools.allow` is an allow-only filter and cannot re-add tools already removed by the profile
 
 Current repo limitation:
 
