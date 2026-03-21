@@ -162,6 +162,10 @@ async function executeSend(params: {
         params?: Record<string, unknown>;
         sandboxRoot?: string;
         requesterSenderId?: string;
+        taskPacket?: {
+          requestId?: string;
+          initiationSource?: string;
+        };
       }
     | undefined;
 }
@@ -809,5 +813,32 @@ describe("message tool sandbox passthrough", () => {
     });
 
     expect(call?.requesterSenderId).toBe("1234567890");
+  });
+
+  it("forwards taskPacket to runMessageAction", async () => {
+    mockSendResult({ to: "telegram:123" });
+
+    const call = await executeSend({
+      toolOptions: {
+        taskPacket: {
+          requestId: "req-1",
+          scope: "project",
+          project: "eleanor",
+          build: "execution",
+          phase: "implement",
+          objective: "send update",
+          allowedActionScopes: ["external_runtime"],
+          replyMode: "summary",
+          initiationSource: "operator_requested",
+        },
+      },
+      action: {
+        target: "telegram:123",
+        message: "hi",
+      },
+    });
+
+    expect(call?.taskPacket?.requestId).toBe("req-1");
+    expect(call?.taskPacket?.initiationSource).toBe("operator_requested");
   });
 });

@@ -259,8 +259,8 @@ export function buildApprovalPendingMessage(params: {
   lines.push(commandBlock);
   lines.push("Mode: foreground (interactive approvals available).");
   lines.push("Background mode requires pre-approved policy (allow-always or ask=off).");
-  lines.push(`Reply with: /approve ${params.approvalSlug} allow-once|allow-always|deny`);
-  lines.push("If the short code is ambiguous, use the full id in /approve.");
+  lines.push(`Reply with: /approve ${params.approvalId} allow-once|allow-always|deny`);
+  lines.push(`Short label: ${params.approvalSlug}`);
   return lines.join("\n");
 }
 

@@ -1,5 +1,6 @@
 import type { StickerMetadata } from "../../extensions/telegram/api.js";
 import type { ChannelId } from "../channels/plugins/types.js";
+import type { TaskPacket } from "../control-plane/task-packet.js";
 import type {
   MediaUnderstandingDecision,
   MediaUnderstandingOutput,
@@ -120,6 +121,8 @@ export type MsgContext = {
   UntrustedContext?: string[];
   /** System-attached provenance for the current inbound message. */
   InputProvenance?: InputProvenance;
+  /** Optional control-plane task packet attached to this turn (gateway chat, automation). */
+  TaskPacket?: TaskPacket;
   /** Explicit owner allowlist overrides (trusted, configuration-derived). */
   OwnerAllowFrom?: Array<string | number>;
   SenderName?: string;

@@ -2,6 +2,7 @@ import type { AgentInternalEvent } from "../../agents/internal-events.js";
 import type { ClientToolDefinition } from "../../agents/pi-embedded-runner/run/params.js";
 import type { SpawnedRunMetadata } from "../../agents/spawned-context.js";
 import type { ChannelOutboundTargetMode } from "../../channels/plugins/types.js";
+import type { TaskPacket } from "../../control-plane/task-packet.js";
 import type { InputProvenance } from "../../sessions/input-provenance.js";
 
 /** Image content block for Claude API multimodal messages. */
@@ -84,6 +85,8 @@ export type AgentCommandOpts = {
   extraSystemPrompt?: string;
   internalEvents?: AgentInternalEvent[];
   inputProvenance?: InputProvenance;
+  /** Control-plane task packet for this run (optional). */
+  taskPacket?: TaskPacket;
   /** Per-call stream param overrides (best-effort). */
   streamParams?: AgentStreamParams;
   /** Explicit workspace directory override (for subagents to inherit parent workspace). */

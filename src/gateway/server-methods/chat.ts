@@ -11,6 +11,8 @@ import type { MsgContext } from "../../auto-reply/templating.js";
 import { isSilentReplyText, SILENT_REPLY_TOKEN } from "../../auto-reply/tokens.js";
 import type { ReplyPayload } from "../../auto-reply/types.js";
 import { resolveSessionFilePath } from "../../config/sessions.js";
+import { updateAutonomyStateFromTaskPacket } from "../../control-plane/autonomy-state-store.js";
+import { parseTaskPacket } from "../../control-plane/task-packet.js";
 import { jsonUtf8Bytes } from "../../infra/json-utf8-bytes.js";
 import { type SavedMedia, saveMediaBuffer } from "../../media/store.js";
 import { createChannelReplyPipeline } from "../../plugin-sdk/channel-reply-pipeline.js";
@@ -1247,6 +1249,7 @@ export const chatHandlers: GatewayRequestHandlers = {
       timeoutMs?: number;
       systemInputProvenance?: InputProvenance;
       systemProvenanceReceipt?: string;
+      taskPacket?: unknown;
       idempotencyKey: string;
     };
     if ((p.systemInputProvenance || p.systemProvenanceReceipt) && !isAcpBridgeClient(client)) {
@@ -1274,6 +1277,32 @@ export const chatHandlers: GatewayRequestHandlers = {
       respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, systemReceiptResult.error));
       return;
     }
+    let parsedTaskPacket: ReturnType<typeof parseTaskPacket> | undefined;
+    if (p.taskPacket !== undefined && p.taskPacket !== null) {
+      try {
+        parsedTaskPacket = parseTaskPacket(p.taskPacket);
+      } catch (err) {
+        respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, String(err)));
+        return;
+      }
+    }
+    const persistTaskPacketState = (
+      verificationState: "partial" | "passed_scoped" | "failed",
+      lastResult: string,
+    ) => {
+      if (!parsedTaskPacket) {
+        return;
+      }
+      void updateAutonomyStateFromTaskPacket({
+        taskPacket: parsedTaskPacket,
+        sessionKey,
+        runId: p.idempotencyKey,
+        verificationState,
+        lastResult,
+      }).catch((err) => {
+        context.logGateway.warn(`task packet state write failed: ${formatForLog(err)}`);
+      });
+    };
     const inboundMessage = sanitizedMessageResult.message;
     const systemInputProvenance = normalizeInputProvenance(p.systemInputProvenance);
     const systemProvenanceReceipt = systemReceiptResult.receipt;
@@ -1311,6 +1340,7 @@ export const chatHandlers: GatewayRequestHandlers = {
     });
     const now = Date.now();
     const clientRunId = p.idempotencyKey;
+    persistTaskPacketState("partial", "chat.send accepted at ingress");
 
     const sendPolicy = resolveSendPolicy({
       cfg,
@@ -1419,6 +1449,7 @@ export const chatHandlers: GatewayRequestHandlers = {
         RawBody: parsedMessage,
         CommandBody: commandBody,
         InputProvenance: systemInputProvenance,
+        TaskPacket: parsedTaskPacket,
         SessionKey: sessionKey,
         Provider: INTERNAL_MESSAGE_CHANNEL,
         Surface: INTERNAL_MESSAGE_CHANNEL,
@@ -1551,6 +1582,8 @@ export const chatHandlers: GatewayRequestHandlers = {
       })
         .then(async () => {
           await rewriteUserTranscriptMedia();
+          let completionSummary = "agent run completed";
+          await emitUserTranscriptUpdate();
           if (!agentRunStarted) {
             await emitUserTranscriptUpdate();
             const btwReplies = deliveredReplies
@@ -1562,6 +1595,7 @@ export const chatHandlers: GatewayRequestHandlers = {
               .join("\n\n")
               .trim();
             if (btwReplies.length > 0 && btwText) {
+              completionSummary = btwText;
               broadcastSideResult({
                 context,
                 payload: {
@@ -1587,6 +1621,9 @@ export const chatHandlers: GatewayRequestHandlers = {
                 .filter(Boolean)
                 .join("\n\n")
                 .trim();
+              if (combinedReply) {
+                completionSummary = combinedReply;
+              }
               let message: Record<string, unknown> | undefined;
               if (combinedReply) {
                 const { storePath: latestStorePath, entry: latestEntry } =
@@ -1628,6 +1665,7 @@ export const chatHandlers: GatewayRequestHandlers = {
           } else {
             void emitUserTranscriptUpdate();
           }
+          persistTaskPacketState("passed_scoped", completionSummary);
           setGatewayDedupeEntry({
             dedupe: context.dedupe,
             key: `chat:${clientRunId}`,
@@ -1639,6 +1677,7 @@ export const chatHandlers: GatewayRequestHandlers = {
           });
         })
         .catch((err) => {
+          persistTaskPacketState("failed", String(err));
           const error = errorShape(ErrorCodes.UNAVAILABLE, String(err));
           setGatewayDedupeEntry({
             dedupe: context.dedupe,

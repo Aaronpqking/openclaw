@@ -1,4 +1,5 @@
 import { Type } from "@sinclair/typebox";
+import { TaskPacketSchema } from "./control-plane.js";
 import { InputProvenanceSchema, NonEmptyString, SessionLabelString } from "./primitives.js";
 
 export const AgentInternalEventSchema = Type.Object(
@@ -98,6 +99,7 @@ export const AgentParamsSchema = Type.Object(
     extraSystemPrompt: Type.Optional(Type.String()),
     internalEvents: Type.Optional(Type.Array(AgentInternalEventSchema)),
     inputProvenance: Type.Optional(InputProvenanceSchema),
+    taskPacket: Type.Optional(TaskPacketSchema),
     idempotencyKey: NonEmptyString,
     label: Type.Optional(SessionLabelString),
   },

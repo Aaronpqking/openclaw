@@ -16,6 +16,8 @@ import {
   type SessionEntry,
   updateSessionStore,
 } from "../../config/sessions.js";
+import { updateAutonomyStateFromTaskPacket } from "../../control-plane/autonomy-state-store.js";
+import { parseTaskPacket } from "../../control-plane/task-packet.js";
 import { registerAgentRunContext } from "../../infra/agent-events.js";
 import {
   resolveAgentDeliveryPlan,
@@ -144,9 +146,44 @@ function dispatchAgentRunFromGateway(params: {
   idempotencyKey: string;
   respond: GatewayRequestHandlerOptions["respond"];
   context: GatewayRequestHandlerOptions["context"];
+  taskPacket?: ReturnType<typeof parseTaskPacket>;
+  sessionKey?: string;
 }) {
+  const persistTaskPacketState = (
+    verificationState: "partial" | "passed_scoped" | "failed",
+    lastResult: string,
+  ) => {
+    if (!params.taskPacket) {
+      return;
+    }
+    void updateAutonomyStateFromTaskPacket({
+      taskPacket: params.taskPacket,
+      sessionKey: params.sessionKey,
+      runId: params.runId,
+      verificationState,
+      lastResult,
+    }).catch((err) => {
+      params.context.logGateway.warn(`task packet state write failed: ${formatForLog(err)}`);
+    });
+  };
   void agentCommandFromIngress(params.ingressOpts, defaultRuntime, params.context.deps)
     .then((result) => {
+      const summary =
+        typeof result === "string"
+          ? result
+          : typeof result === "object" && result && "summary" in result
+            ? (() => {
+                const summaryValue = (result as { summary?: unknown }).summary;
+                if (typeof summaryValue === "string") {
+                  return summaryValue;
+                }
+                if (typeof summaryValue === "number" || typeof summaryValue === "boolean") {
+                  return `${summaryValue}`;
+                }
+                return "completed";
+              })()
+            : "completed";
+      persistTaskPacketState("passed_scoped", summary);
       const payload = {
         runId: params.runId,
         status: "ok" as const,
@@ -167,6 +204,7 @@ function dispatchAgentRunFromGateway(params: {
       params.respond(true, payload, undefined, { runId: params.runId });
     })
     .catch((err) => {
+      persistTaskPacketState("failed", String(err));
       const error = errorShape(ErrorCodes.UNAVAILABLE, String(err));
       const payload = {
         runId: params.runId,
@@ -237,6 +275,7 @@ export const agentHandlers: GatewayRequestHandlers = {
       bestEffortDeliver?: boolean;
       label?: string;
       inputProvenance?: InputProvenance;
+      taskPacket?: unknown;
     };
     const senderIsOwner = resolveSenderIsOwnerFromClient(client);
     const allowModelOverride = resolveAllowModelOverrideFromClient(client);
@@ -266,6 +305,15 @@ export const agentHandlers: GatewayRequestHandlers = {
     let resolvedGroupSpace: string | undefined = normalizedSpawned.groupSpace;
     let spawnedByValue: string | undefined;
     const inputProvenance = normalizeInputProvenance(request.inputProvenance);
+    let parsedTaskPacket: ReturnType<typeof parseTaskPacket> | undefined;
+    if (request.taskPacket !== undefined && request.taskPacket !== null) {
+      try {
+        parsedTaskPacket = parseTaskPacket(request.taskPacket);
+      } catch (err) {
+        respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, String(err)));
+        return;
+      }
+    }
     const cached = context.dedupe.get(`agent:${idem}`);
     if (cached) {
       respond(cached.ok, cached.payload, cached.error, {
@@ -630,6 +678,17 @@ export const agentHandlers: GatewayRequestHandlers = {
       status: "accepted" as const,
       acceptedAt: Date.now(),
     };
+    if (parsedTaskPacket) {
+      void updateAutonomyStateFromTaskPacket({
+        taskPacket: parsedTaskPacket,
+        sessionKey: resolvedSessionKey,
+        runId,
+        verificationState: "partial",
+        lastResult: "agent.accepted at ingress",
+      }).catch((err) => {
+        context.logGateway.warn(`task packet state write failed: ${formatForLog(err)}`);
+      });
+    }
     // Store an in-flight ack so retries do not spawn a second run.
     setGatewayDedupeEntry({
       dedupe: context.dedupe,
@@ -699,6 +758,7 @@ export const agentHandlers: GatewayRequestHandlers = {
         extraSystemPrompt: request.extraSystemPrompt,
         internalEvents: request.internalEvents,
         inputProvenance,
+        taskPacket: parsedTaskPacket,
         // Internal-only: allow workspace override for spawned subagent runs.
         workspaceDir: resolveIngressWorkspaceOverrideForSpawnedRun({
           spawnedBy: spawnedByValue,
@@ -711,6 +771,8 @@ export const agentHandlers: GatewayRequestHandlers = {
       idempotencyKey: idem,
       respond,
       context,
+      taskPacket: parsedTaskPacket,
+      sessionKey: resolvedSessionKey,
     });
   },
   "agent.identity.get": ({ params, respond }) => {

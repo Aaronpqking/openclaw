@@ -1,3 +1,4 @@
+import { registerControlPlaneContextEngine } from "./control-plane.js";
 import { registerLegacyContextEngine } from "./legacy.js";
 
 /**
@@ -20,4 +21,5 @@ export function ensureContextEnginesInitialized(): void {
 
   // Always available – safe fallback for the "legacy" slot default.
   registerLegacyContextEngine();
+  registerControlPlaneContextEngine();
 }

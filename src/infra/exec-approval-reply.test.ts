@@ -46,7 +46,7 @@ describe("exec approval reply helpers", () => {
     });
   });
 
-  it("builds pending reply payloads with trimmed warning text and slug fallback", () => {
+  it("builds pending reply payloads with trimmed warning text and full-id default", () => {
     const payload = buildExecApprovalPendingReplyPayload({
       warningText: "  Heads up.  ",
       approvalId: "req-1",
@@ -67,7 +67,7 @@ describe("exec approval reply helpers", () => {
       },
     });
     expect(payload.text).toContain("Heads up.");
-    expect(payload.text).toContain("```txt\n/approve slug-1 allow-once\n```");
+    expect(payload.text).toContain("```txt\n/approve req-1 allow-once\n```");
     expect(payload.text).toContain("```sh\necho ok\n```");
     expect(payload.text).toContain("Host: gateway\nNode: node-1\nCWD: /tmp/work\nExpires in: 2s");
     expect(payload.text).toContain("Full id: `req-1`");

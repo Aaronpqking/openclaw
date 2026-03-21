@@ -2,6 +2,7 @@ import { codingTools, createReadTool, readTool } from "@mariozechner/pi-coding-a
 import type { OpenClawConfig } from "../config/config.js";
 import type { ModelCompatConfig } from "../config/types.models.js";
 import type { ToolLoopDetectionConfig } from "../config/types.tools.js";
+import type { TaskPacket } from "../control-plane/task-packet.js";
 import { resolveMergedSafeBinProfileFixtures } from "../infra/exec-safe-bin-runtime-policy.js";
 import { logWarn } from "../logger.js";
 import { getPluginToolMeta } from "../plugins/tools.js";
@@ -274,6 +275,8 @@ export function createOpenClawCodingTools(options?: {
   senderIsOwner?: boolean;
   /** Callback invoked when sessions_yield tool is called. */
   onYield?: (message: string) => Promise<void> | void;
+  /** Control-plane task packet for exec approval (Eleanor Lite). */
+  taskPacket?: TaskPacket;
 }): AnyAgentTool[] {
   const execToolName = "exec";
   const sandbox = options?.sandbox?.enabled ? options.sandbox : undefined;
@@ -414,6 +417,7 @@ export function createOpenClawCodingTools(options?: {
   const { cleanupMs: cleanupMsOverride, ...execDefaults } = options?.exec ?? {};
   const execTool = createExecTool({
     ...execDefaults,
+    taskPacket: options?.taskPacket,
     host: options?.exec?.host ?? execConfig.host,
     security: options?.exec?.security ?? execConfig.security,
     ask: options?.exec?.ask ?? execConfig.ask,
@@ -540,6 +544,7 @@ export function createOpenClawCodingTools(options?: {
       senderIsOwner: options?.senderIsOwner,
       sessionId: options?.sessionId,
       onYield: options?.onYield,
+      taskPacket: options?.taskPacket,
       allowGatewaySubagentBinding: options?.allowGatewaySubagentBinding,
     }),
   ];

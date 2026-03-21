@@ -1,4 +1,5 @@
 import type { OpenClawConfig } from "../config/config.js";
+import type { TaskPacket } from "../control-plane/task-packet.js";
 import { resolvePluginTools } from "../plugins/tools.js";
 import { getActiveRuntimeWebToolsMetadata } from "../secrets/runtime.js";
 import type { GatewayMessageChannel } from "../utils/message-channel.js";
@@ -68,6 +69,8 @@ export function createOpenClawTools(
     disableMessageTool?: boolean;
     /** Trusted sender id from inbound context (not tool args). */
     requesterSenderId?: string | null;
+    /** Optional control-plane task packet for outbound approval/reporting. */
+    taskPacket?: TaskPacket;
     /** Whether the requesting sender is an owner. */
     senderIsOwner?: boolean;
     /** Ephemeral session UUID — regenerated on /new and /reset. */
@@ -146,6 +149,7 @@ export function createOpenClawTools(
         sandboxRoot: options?.sandboxRoot,
         requireExplicitTarget: options?.requireExplicitMessageTarget,
         requesterSenderId: options?.requesterSenderId ?? undefined,
+        taskPacket: options?.taskPacket,
       });
   const tools: AnyAgentTool[] = [
     createBrowserTool({

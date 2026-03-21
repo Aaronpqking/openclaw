@@ -632,6 +632,30 @@ describe("Default engine selection", () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe("Invalid engine fallback", () => {
+  it("falls back to legacy when control-plane slot is configured but unavailable", async () => {
+    const registryStateSymbol = Symbol.for("openclaw.contextEngineRegistryState");
+    const globalState = globalThis as typeof globalThis & {
+      [key: symbol]: {
+        engines: Map<string, { factory: ContextEngineFactory; owner: string }>;
+      };
+    };
+    const previousState = globalState[registryStateSymbol];
+    try {
+      globalState[registryStateSymbol] = {
+        engines: new Map<string, { factory: ContextEngineFactory; owner: string }>(),
+      };
+      registerLegacyContextEngine();
+      const engine = await resolveContextEngine(configWithSlot("control-plane"));
+      expect(engine.info.id).toBe("legacy");
+    } finally {
+      if (previousState) {
+        globalState[registryStateSymbol] = previousState;
+      } else {
+        delete globalState[registryStateSymbol];
+      }
+    }
+  });
+
   it("includes the requested id and available ids in unknown-engine errors", async () => {
     // Ensure at least legacy is registered so we see it in the available list
     registerLegacyContextEngine();
