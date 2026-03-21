@@ -22,11 +22,36 @@ describe("resolveApprovalPolicy", () => {
     expect(result.reportImmediately).toBe(true);
   });
 
+  it("requires explicit approval for operator-requested policy change", () => {
+    const result = resolveApprovalPolicy({
+      initiationSource: "operator_requested",
+      actionScope: "cursor_workspace",
+      actionClass: "policy_change",
+      allowedActionScopes: ["cursor_workspace"],
+    });
+    expect(result.allowed).toBe(false);
+    expect(result.approvalMode).toBe("explicit");
+    expect(result.deliveryState).toBe("approval_required");
+  });
+
   it("requires approval for self-driven sends", () => {
     const result = resolveApprovalPolicy({
       initiationSource: "self_driven",
       actionScope: "external_runtime",
       actionClass: "send",
+      allowedActionScopes: ["external_runtime"],
+    });
+
+    expect(result.allowed).toBe(false);
+    expect(result.approvalMode).toBe("explicit");
+    expect(result.deliveryState).toBe("approval_required");
+  });
+
+  it("requires explicit approval for self-driven memory writes in external runtime scope", () => {
+    const result = resolveApprovalPolicy({
+      initiationSource: "self_driven",
+      actionScope: "external_runtime",
+      actionClass: "write_memory",
       allowedActionScopes: ["external_runtime"],
     });
 
@@ -45,6 +70,53 @@ describe("resolveApprovalPolicy", () => {
 
     expect(result.allowed).toBe(false);
     expect(result.deliveryState).toBe("blocked");
+  });
+
+  it("treats operator-thread actions as already approved", () => {
+    const result = resolveApprovalPolicy({
+      initiationSource: "operator_requested",
+      actionScope: "operator_thread",
+      actionClass: "send",
+      allowedActionScopes: ["operator_thread"],
+    });
+    expect(result.allowed).toBe(true);
+    expect(result.approvalMode).toBe("none");
+    expect(result.deliveryState).toBe("queued");
+  });
+
+  it("blocks n/a operator-thread operate actions", () => {
+    const result = resolveApprovalPolicy({
+      initiationSource: "operator_requested",
+      actionScope: "operator_thread",
+      actionClass: "deploy",
+      allowedActionScopes: ["operator_thread"],
+    });
+    expect(result.allowed).toBe(false);
+    expect(result.deliveryState).toBe("blocked");
+  });
+
+  it("allows self-driven low-risk read without extra approval", () => {
+    const result = resolveApprovalPolicy({
+      initiationSource: "self_driven",
+      actionScope: "cursor_workspace",
+      actionClass: "read",
+      allowedActionScopes: ["cursor_workspace"],
+    });
+    expect(result.allowed).toBe(true);
+    expect(result.approvalMode).toBe("none");
+    expect(result.deliveryState).toBe("queued");
+  });
+
+  it("requires approval for external-triggered edits outside local scope", () => {
+    const result = resolveApprovalPolicy({
+      initiationSource: "external_triggered",
+      actionScope: "tenant_surface",
+      actionClass: "edit",
+      allowedActionScopes: ["tenant_surface"],
+    });
+    expect(result.allowed).toBe(false);
+    expect(result.approvalMode).toBe("explicit");
+    expect(result.deliveryState).toBe("approval_required");
   });
 });
 

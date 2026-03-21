@@ -77,4 +77,36 @@ describe("parseTaskPacket", () => {
       { channel: "whatsapp", target: "+15550002222", immediate: false },
     ]);
   });
+
+  it("accepts snake_case aliases and extended enum values", () => {
+    const packet = parseTaskPacket({
+      request_id: "req-3",
+      run_id: "run-3",
+      scope: "project",
+      project: "eliteforms",
+      build: "google",
+      phase: "implement",
+      objective: "Normalize packet contract",
+      allowed_action_scopes: ["cursor_workspace", "operator_thread"],
+      reply_mode: "summary",
+      allowed_actions: ["edit", "verify"],
+      autonomy_mode: "execute_bounded",
+      initiation_source: "operator_requested",
+      evidence_refs: ["artifact://contract-spec"],
+      report_targets: [{ channel: "operator_thread", target: "cursor" }],
+    });
+
+    expect(packet.requestId).toBe("req-3");
+    expect(packet.runId).toBe("run-3");
+    expect(packet.project).toBe("eliteforms");
+    expect(packet.build).toBe("google");
+    expect(packet.allowedActionScopes).toEqual(["cursor_workspace", "operator_thread"]);
+    expect(packet.allowedActions).toEqual(["edit", "verify"]);
+    expect(packet.autonomyMode).toBe("execute_bounded");
+    expect(packet.initiationSource).toBe("operator_requested");
+    expect(packet.evidenceRefs).toEqual(["artifact://contract-spec"]);
+    expect(packet.reportTargets).toEqual([
+      { channel: "operator_thread", target: "cursor", immediate: true },
+    ]);
+  });
 });

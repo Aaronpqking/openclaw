@@ -1,6 +1,12 @@
-const TASK_PACKET_SCOPES = ["global", "project"] as const;
-const TASK_PACKET_PROJECTS = ["none", "openclaw", "eleanor", "shared"] as const;
-const TASK_PACKET_BUILDS = [
+export const TASK_PACKET_SCOPES = ["global", "project"] as const;
+export const TASK_PACKET_PROJECTS = [
+  "none",
+  "openclaw",
+  "eleanor",
+  "eliteforms",
+  "shared",
+] as const;
+export const TASK_PACKET_BUILDS = [
   "engine",
   "api",
   "ui",
@@ -11,11 +17,14 @@ const TASK_PACKET_BUILDS = [
   "policy",
   "trust",
   "channels",
+  "google",
+  "whatsapp",
+  "node",
   "release",
   "docs",
   "tests",
 ] as const;
-const TASK_PACKET_PHASES = [
+export const TASK_PACKET_PHASES = [
   "discover",
   "diagnose",
   "design",
@@ -30,28 +39,33 @@ const TASK_PACKET_PHASES = [
   "handoff",
   "complete",
 ] as const;
-const TASK_PACKET_REPLY_MODES = ["summary", "detailed", "checkpoint", "enum_only"] as const;
-const TASK_PACKET_AUTONOMY_MODES = [
+export const TASK_PACKET_REPLY_MODES = ["summary", "detailed", "checkpoint", "enum_only"] as const;
+export const TASK_PACKET_AUTONOMY_MODES = [
   "observe",
   "propose",
   "execute_safe",
   "execute_bounded",
   "escalate",
 ] as const;
-const TASK_PACKET_INITIATION_SOURCES = [
+export const TASK_PACKET_INITIATION_SOURCES = [
   "operator_requested",
   "self_driven",
   "scheduled",
   "external_triggered",
 ] as const;
-const TASK_PACKET_ACTION_SCOPES = [
+export const TASK_PACKET_ACTION_SCOPES = [
   "global",
   "cursor_workspace",
   "operator_thread",
   "external_runtime",
   "tenant_surface",
 ] as const;
-const TASK_PACKET_REPORT_CHANNELS = ["whatsapp", "operator_thread", "webchat", "email"] as const;
+export const TASK_PACKET_REPORT_CHANNELS = [
+  "whatsapp",
+  "operator_thread",
+  "webchat",
+  "email",
+] as const;
 
 export type TaskPacketScope = (typeof TASK_PACKET_SCOPES)[number];
 export type TaskPacketProject = (typeof TASK_PACKET_PROJECTS)[number];
@@ -173,36 +187,93 @@ function normalizeReportTargets(value: unknown): TaskPacketReportTarget[] | unde
   return normalized.length > 0 ? normalized : undefined;
 }
 
+function readTaskPacketField(
+  value: Record<string, unknown>,
+  camelCaseKey: string,
+  snakeCaseKey: string,
+): unknown {
+  return value[camelCaseKey] ?? value[snakeCaseKey];
+}
+
 export function parseTaskPacket(value: unknown): TaskPacket {
   if (!isRecord(value)) {
     throw new Error("taskPacket must be an object");
   }
   return {
-    requestId: normalizeNonEmptyString(value.requestId, "requestId"),
-    runId: value.runId === undefined ? undefined : normalizeNonEmptyString(value.runId, "runId"),
-    scope: normalizeEnumValue(value.scope, TASK_PACKET_SCOPES, "scope"),
-    project: normalizeEnumValue(value.project, TASK_PACKET_PROJECTS, "project"),
-    build: normalizeEnumValue(value.build, TASK_PACKET_BUILDS, "build"),
-    phase: normalizeEnumValue(value.phase, TASK_PACKET_PHASES, "phase"),
-    objective: normalizeNonEmptyString(value.objective, "objective"),
-    allowedActionScopes: normalizeActionScopes(value.allowedActionScopes),
-    replyMode: normalizeEnumValue(value.replyMode, TASK_PACKET_REPLY_MODES, "replyMode"),
-    constraints: normalizeStringList(value.constraints, "constraints"),
-    acceptance: normalizeStringList(value.acceptance, "acceptance"),
-    allowedActions: normalizeStringList(value.allowedActions, "allowedActions"),
-    autonomyMode:
-      value.autonomyMode === undefined
+    requestId: normalizeNonEmptyString(
+      readTaskPacketField(value, "requestId", "request_id"),
+      "requestId",
+    ),
+    runId:
+      readTaskPacketField(value, "runId", "run_id") === undefined
         ? undefined
-        : normalizeEnumValue(value.autonomyMode, TASK_PACKET_AUTONOMY_MODES, "autonomyMode"),
-    initiationSource:
-      value.initiationSource === undefined
+        : normalizeNonEmptyString(readTaskPacketField(value, "runId", "run_id"), "runId"),
+    scope: normalizeEnumValue(
+      readTaskPacketField(value, "scope", "scope"),
+      TASK_PACKET_SCOPES,
+      "scope",
+    ),
+    project: normalizeEnumValue(
+      readTaskPacketField(value, "project", "project"),
+      TASK_PACKET_PROJECTS,
+      "project",
+    ),
+    build: normalizeEnumValue(
+      readTaskPacketField(value, "build", "build"),
+      TASK_PACKET_BUILDS,
+      "build",
+    ),
+    phase: normalizeEnumValue(
+      readTaskPacketField(value, "phase", "phase"),
+      TASK_PACKET_PHASES,
+      "phase",
+    ),
+    objective: normalizeNonEmptyString(
+      readTaskPacketField(value, "objective", "objective"),
+      "objective",
+    ),
+    allowedActionScopes: normalizeActionScopes(
+      readTaskPacketField(value, "allowedActionScopes", "allowed_action_scopes"),
+    ),
+    replyMode: normalizeEnumValue(
+      readTaskPacketField(value, "replyMode", "reply_mode"),
+      TASK_PACKET_REPLY_MODES,
+      "replyMode",
+    ),
+    constraints: normalizeStringList(
+      readTaskPacketField(value, "constraints", "constraints"),
+      "constraints",
+    ),
+    acceptance: normalizeStringList(
+      readTaskPacketField(value, "acceptance", "acceptance"),
+      "acceptance",
+    ),
+    allowedActions: normalizeStringList(
+      readTaskPacketField(value, "allowedActions", "allowed_actions"),
+      "allowedActions",
+    ),
+    autonomyMode:
+      readTaskPacketField(value, "autonomyMode", "autonomy_mode") === undefined
         ? undefined
         : normalizeEnumValue(
-            value.initiationSource,
+            readTaskPacketField(value, "autonomyMode", "autonomy_mode"),
+            TASK_PACKET_AUTONOMY_MODES,
+            "autonomyMode",
+          ),
+    initiationSource:
+      readTaskPacketField(value, "initiationSource", "initiation_source") === undefined
+        ? undefined
+        : normalizeEnumValue(
+            readTaskPacketField(value, "initiationSource", "initiation_source"),
             TASK_PACKET_INITIATION_SOURCES,
             "initiationSource",
           ),
-    evidenceRefs: normalizeStringList(value.evidenceRefs, "evidenceRefs"),
-    reportTargets: normalizeReportTargets(value.reportTargets),
+    evidenceRefs: normalizeStringList(
+      readTaskPacketField(value, "evidenceRefs", "evidence_refs"),
+      "evidenceRefs",
+    ),
+    reportTargets: normalizeReportTargets(
+      readTaskPacketField(value, "reportTargets", "report_targets"),
+    ),
   };
 }

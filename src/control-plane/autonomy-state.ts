@@ -42,6 +42,72 @@ export type AutonomyState = {
   lastResult?: string;
 };
 
+const PHASE_LOCKED_TERMINAL: ReadonlySet<TaskPacketPhase> = new Set(["complete"]);
+const PHASE_HOLD_STATES: TaskPacketPhase[] = ["blocked", "awaiting_decision", "deferred"];
+const ACTIVE_PHASES: TaskPacketPhase[] = [
+  "discover",
+  "diagnose",
+  "design",
+  "plan",
+  "implement",
+  "repair",
+  "verify",
+  "report",
+  "handoff",
+];
+
+type PhaseTransitionMatrix = Record<TaskPacketPhase, ReadonlySet<TaskPacketPhase>>;
+
+function createTransitionMatrix(): PhaseTransitionMatrix {
+  const matrix = {} as Record<TaskPacketPhase, ReadonlySet<TaskPacketPhase>>;
+  const holdSet = new Set<TaskPacketPhase>(PHASE_HOLD_STATES);
+  const activeSet = new Set<TaskPacketPhase>(ACTIVE_PHASES);
+  const allowedFromActive = (next: TaskPacketPhase[]): ReadonlySet<TaskPacketPhase> =>
+    new Set<TaskPacketPhase>([...next, ...PHASE_HOLD_STATES]);
+
+  matrix.discover = allowedFromActive(["diagnose", "design", "plan"]);
+  matrix.diagnose = allowedFromActive(["design", "plan", "implement"]);
+  matrix.design = allowedFromActive(["plan", "implement"]);
+  matrix.plan = allowedFromActive(["implement", "repair", "verify"]);
+  matrix.implement = allowedFromActive(["repair", "verify", "report"]);
+  matrix.repair = allowedFromActive(["implement", "verify", "report"]);
+  matrix.verify = allowedFromActive(["implement", "repair", "report", "handoff"]);
+  matrix.report = allowedFromActive(["implement", "repair", "verify", "handoff", "complete"]);
+  matrix.handoff = allowedFromActive(["verify", "report", "complete"]);
+  matrix.complete = new Set<TaskPacketPhase>(["complete"]);
+
+  // Hold phases can resume into any active phase, remain held, or close if explicitly complete.
+  matrix.blocked = new Set<TaskPacketPhase>([...activeSet, ...holdSet, "complete"]);
+  matrix.awaiting_decision = new Set<TaskPacketPhase>([...activeSet, ...holdSet, "complete"]);
+  matrix.deferred = new Set<TaskPacketPhase>([...activeSet, ...holdSet, "complete"]);
+  return matrix;
+}
+
+const PHASE_TRANSITION_MATRIX = createTransitionMatrix();
+
+function resolveBoundedPhaseTransition(params: {
+  current: TaskPacketPhase;
+  requested?: TaskPacketPhase;
+}): { phase: TaskPacketPhase; warning?: string } {
+  if (!params.requested || params.requested === params.current) {
+    return { phase: params.current };
+  }
+  if (PHASE_LOCKED_TERMINAL.has(params.current)) {
+    return {
+      phase: params.current,
+      warning: `phase transition denied: ${params.current} -> ${params.requested}`,
+    };
+  }
+  const allowed = PHASE_TRANSITION_MATRIX[params.current];
+  if (allowed?.has(params.requested)) {
+    return { phase: params.requested };
+  }
+  return {
+    phase: params.current,
+    warning: `phase transition denied: ${params.current} -> ${params.requested}`,
+  };
+}
+
 export function createAutonomyState(
   input: Omit<AutonomyState, "updatedAt"> & { updatedAt?: string },
 ): AutonomyState {
@@ -79,10 +145,18 @@ export function recordAutonomyWriteback(
     updatedAt?: string;
   },
 ): AutonomyState {
+  const phaseTransition = resolveBoundedPhaseTransition({
+    current: state.phase,
+    requested: patch.phase,
+  });
+  const blockers = patch.blockers ?? state.blockers;
+  const boundedBlockers = phaseTransition.warning
+    ? [...new Set([...blockers, phaseTransition.warning])]
+    : blockers;
   return createAutonomyState({
     ...state,
-    phase: patch.phase ?? state.phase,
-    blockers: patch.blockers ?? state.blockers,
+    phase: phaseTransition.phase,
+    blockers: boundedBlockers,
     nextActions: patch.nextActions ?? state.nextActions,
     verificationState: patch.verificationState ?? state.verificationState,
     authorityLevel: patch.authorityLevel ?? state.authorityLevel,

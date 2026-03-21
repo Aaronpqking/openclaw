@@ -1,4 +1,8 @@
 import type { ChannelMessageActionName } from "../channels/plugins/types.js";
+import {
+  resolveExecutionPolicyDecision,
+  type ControlActionClass as ExecutionPolicyActionClass,
+} from "./execution-policy.js";
 import type {
   TaskPacket,
   TaskPacketActionScope,
@@ -42,16 +46,6 @@ export type ApprovalResolution = {
   reportTargets: TaskPacketReportTarget[];
 };
 
-const SELF_DRIVEN_EXPLICIT_ACTIONS = new Set<ControlActionClass>([
-  "send",
-  "schedule",
-  "deploy",
-  "restart",
-  "write_memory",
-  "delete",
-  "policy_change",
-]);
-
 export function resolveApprovalPolicy(params: {
   initiationSource: TaskPacketInitiationSource;
   actionScope: TaskPacketActionScope;
@@ -70,60 +64,27 @@ export function resolveApprovalPolicy(params: {
       reportTargets,
     };
   }
-
-  if (params.initiationSource === "operator_requested") {
+  const decision = resolveExecutionPolicyDecision({
+    initiationSource: params.initiationSource,
+    actionScope: params.actionScope,
+    actionClass: params.actionClass as ExecutionPolicyActionClass,
+  });
+  if (!decision.allowed) {
     return {
-      allowed: true,
-      approvalMode: "bounded_auto",
-      deliveryState: "queued",
-      reason: "explicit operator request acts as the approval for in-scope actions",
-      reportImmediately: reportTargets.some((target) => target.immediate !== false),
+      allowed: false,
+      approvalMode: decision.approvalMode,
+      deliveryState: decision.deniedAs,
+      reason: decision.reason,
+      reportImmediately: params.initiationSource === "operator_requested",
       reportTargets,
     };
   }
-
-  if (params.initiationSource === "self_driven") {
-    if (SELF_DRIVEN_EXPLICIT_ACTIONS.has(params.actionClass)) {
-      return {
-        allowed: false,
-        approvalMode: "explicit",
-        deliveryState: "approval_required",
-        reason: `self-driven ${params.actionClass} actions require approval`,
-        reportImmediately: false,
-        reportTargets,
-      };
-    }
-    return {
-      allowed: true,
-      approvalMode: "bounded_auto",
-      deliveryState: "queued",
-      reason: `self-driven ${params.actionClass} action is safe within allowed scope`,
-      reportImmediately: false,
-      reportTargets,
-    };
-  }
-
-  if (
-    params.actionClass === "read" ||
-    params.actionClass === "plan" ||
-    params.actionClass === "verify"
-  ) {
-    return {
-      allowed: true,
-      approvalMode: "bounded_auto",
-      deliveryState: "queued",
-      reason: `${params.initiationSource} ${params.actionClass} action is safe within allowed scope`,
-      reportImmediately: false,
-      reportTargets,
-    };
-  }
-
   return {
-    allowed: false,
-    approvalMode: "explicit",
-    deliveryState: "approval_required",
-    reason: `${params.initiationSource} ${params.actionClass} action requires approval`,
-    reportImmediately: false,
+    allowed: true,
+    approvalMode: decision.approvalMode,
+    deliveryState: "queued",
+    reason: decision.reason,
+    reportImmediately: params.initiationSource === "operator_requested",
     reportTargets,
   };
 }
