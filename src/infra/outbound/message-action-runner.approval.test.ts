@@ -121,4 +121,31 @@ describe("runMessageAction approval policy", () => {
     expect(result.kind).toBe("send");
     expect(result.dryRun).toBe(false);
   });
+
+  it("allows self-driven Eleanor sends for owner requests", async () => {
+    const result = await runMessageAction({
+      cfg,
+      action: "send",
+      params: {
+        channel: "whatsapp",
+        target: "+15550001111",
+        message: "status",
+      },
+      requesterIsOwner: true,
+      taskPacket: {
+        requestId: "req-3",
+        scope: "project",
+        project: "eleanor",
+        build: "execution",
+        phase: "implement",
+        objective: "send status",
+        allowedActionScopes: ["external_runtime"],
+        replyMode: "summary",
+        initiationSource: "self_driven",
+      },
+    });
+
+    expect(result.kind).toBe("send");
+    expect(result.dryRun).toBe(false);
+  });
 });

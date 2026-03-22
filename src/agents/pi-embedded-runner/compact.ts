@@ -111,7 +111,7 @@ import {
 import { collectAllowedToolNames } from "./tool-name-allowlist.js";
 import { splitSdkTools } from "./tool-split.js";
 import type { EmbeddedPiCompactResult } from "./types.js";
-import { describeUnknownError, mapThinkingLevel } from "./utils.js";
+import { describeUnknownError, mapThinkingLevelForModel } from "./utils.js";
 import { flushPendingToolResultsAfterIdle } from "./wait-for-idle-before-flush.js";
 
 export type CompactEmbeddedPiSessionParams = {
@@ -830,7 +830,12 @@ export async function compactEmbeddedPiSessionDirect(
         authStorage,
         modelRegistry,
         model: effectiveModel,
-        thinkingLevel: mapThinkingLevel(params.thinkLevel),
+        thinkingLevel: mapThinkingLevelForModel({
+          level: params.thinkLevel,
+          provider,
+          modelId,
+          api: model.api,
+        }),
         tools: builtInTools,
         customTools,
         sessionManager,

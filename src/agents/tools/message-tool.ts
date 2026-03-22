@@ -396,6 +396,7 @@ type MessageToolOptions = {
   sandboxRoot?: string;
   requireExplicitTarget?: boolean;
   requesterSenderId?: string;
+  senderIsOwner?: boolean;
   taskPacket?: TaskPacket;
 };
 
@@ -773,6 +774,7 @@ export function createMessageTool(options?: MessageToolOptions): AnyAgentTool {
         params,
         defaultAccountId: accountId ?? undefined,
         requesterSenderId: options?.requesterSenderId,
+        requesterIsOwner: options?.senderIsOwner === true,
         gateway,
         toolContext,
         sessionKey: options?.agentSessionKey,

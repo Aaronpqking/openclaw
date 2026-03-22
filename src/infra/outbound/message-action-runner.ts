@@ -102,6 +102,7 @@ export type RunMessageActionParams = {
   params: Record<string, unknown>;
   defaultAccountId?: string;
   requesterSenderId?: string | null;
+  requesterIsOwner?: boolean;
   sessionId?: string;
   toolContext?: ChannelThreadingToolContext;
   gateway?: MessageActionRunnerGateway;
@@ -797,16 +798,21 @@ export async function runMessageAction(
     accountId,
   });
 
+  const actionClass = resolveMessageActionClass(action);
   if (input.taskPacket?.project === "eleanor") {
+    const approvalInitiationSource =
+      input.requesterIsOwner && actionClass === "send"
+        ? "operator_requested"
+        : (input.taskPacket.initiationSource ?? "external_triggered");
     const approval = resolveApprovalPolicy({
-      initiationSource: input.taskPacket.initiationSource ?? "external_triggered",
+      initiationSource: approvalInitiationSource,
       actionScope: resolveMessageActionScope({
         taskPacket: input.taskPacket,
         channel,
         target:
           readStringParam(params, "to") ?? readStringParam(params, "target") ?? resolvedTarget?.to,
       }),
-      actionClass: resolveMessageActionClass(action),
+      actionClass,
       allowedActionScopes: input.taskPacket.allowedActionScopes,
       reportTargets: input.taskPacket.reportTargets,
     });

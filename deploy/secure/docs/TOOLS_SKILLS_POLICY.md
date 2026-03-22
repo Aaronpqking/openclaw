@@ -96,7 +96,7 @@ Examples:
 - `["wacli"]` if you intentionally want the WhatsApp CLI skill
 - `["peekaboo"]` only if the host really needs screenshot capture
 
-The secure MVP compose now bakes `gog` into the secure image by default. The managed browser runtime stays opt-in via `OPENCLAW_INSTALL_BROWSER=1`, because Chromium/Xvfb materially increase image size and can fail on small VPS disks.
+The secure MVP compose now bakes `gog` into the secure image by default. Browser runtime is also enabled by default in secure compose (`OPENCLAW_INSTALL_BROWSER=1`) so browser tools work immediately; set `OPENCLAW_INSTALL_BROWSER=0` when disk-constrained hosts need a smaller image.
 
 Do not enable marketplace or third-party skills in production until they are reviewed.
 

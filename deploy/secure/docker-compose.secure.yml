@@ -5,7 +5,7 @@ services:
       dockerfile: Dockerfile
       target: secure-runtime-assets
       args:
-        OPENCLAW_INSTALL_BROWSER: ${OPENCLAW_INSTALL_BROWSER:-0}
+        OPENCLAW_INSTALL_BROWSER: ${OPENCLAW_INSTALL_BROWSER:-1}
         OPENCLAW_INSTALL_GOG: ${OPENCLAW_INSTALL_GOG:-1}
     image: openclaw:secure-mvp
     init: true
@@ -18,6 +18,7 @@ services:
     environment:
       HOME: /home/node
       XDG_CONFIG_HOME: /home/node/.openclaw/xdg-config
+      PLAYWRIGHT_BROWSERS_PATH: /home/node/.openclaw/ms-playwright
       TERM: xterm-256color
       OPENCLAW_GATEWAY_TOKEN: ""
       OPENCLAW_GATEWAY_PASSWORD: ""

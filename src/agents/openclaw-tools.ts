@@ -149,6 +149,7 @@ export function createOpenClawTools(
         sandboxRoot: options?.sandboxRoot,
         requireExplicitTarget: options?.requireExplicitMessageTarget,
         requesterSenderId: options?.requesterSenderId ?? undefined,
+        senderIsOwner: options?.senderIsOwner === true,
         taskPacket: options?.taskPacket,
       });
   const tools: AnyAgentTool[] = [

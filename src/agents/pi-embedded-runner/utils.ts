@@ -16,6 +16,30 @@ export function mapThinkingLevel(level?: ThinkLevel): ThinkingLevel {
   return level;
 }
 
+export function mapThinkingLevelForModel(params: {
+  level?: ThinkLevel;
+  provider?: string;
+  modelId?: string;
+  api?: string;
+}): ThinkingLevel {
+  const mapped = mapThinkingLevel(params.level);
+  if (mapped !== "minimal") {
+    return mapped;
+  }
+  const provider = params.provider?.trim().toLowerCase();
+  const modelId = params.modelId?.trim().toLowerCase();
+  const api = params.api?.trim().toLowerCase();
+  // OpenAI Responses rejects "minimal" on GPT-5.4 mini and related variants.
+  if (
+    (provider === "openai" || provider === "openai-codex") &&
+    api?.includes("openai") &&
+    modelId?.startsWith("gpt-5")
+  ) {
+    return "low";
+  }
+  return mapped;
+}
+
 export function describeUnknownError(error: unknown): string {
   if (error instanceof Error) {
     return error.message;

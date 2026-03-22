@@ -137,7 +137,7 @@ import { dropThinkingBlocks } from "../thinking.js";
 import { collectAllowedToolNames } from "../tool-name-allowlist.js";
 import { installToolResultContextGuard } from "../tool-result-context-guard.js";
 import { splitSdkTools } from "../tool-split.js";
-import { describeUnknownError, mapThinkingLevel } from "../utils.js";
+import { describeUnknownError, mapThinkingLevelForModel } from "../utils.js";
 import { flushPendingToolResultsAfterIdle } from "../wait-for-idle-before-flush.js";
 import { waitForCompactionRetryWithAggregateTimeout } from "./compaction-retry-aggregate-timeout.js";
 import {
@@ -2142,7 +2142,12 @@ export async function runEmbeddedAttempt(
         authStorage: params.authStorage,
         modelRegistry: params.modelRegistry,
         model: params.model,
-        thinkingLevel: mapThinkingLevel(params.thinkLevel),
+        thinkingLevel: mapThinkingLevelForModel({
+          level: params.thinkLevel,
+          provider: params.provider,
+          modelId: params.modelId,
+          api: params.model.api,
+        }),
         tools: builtInTools,
         customTools: allCustomTools,
         sessionManager,
