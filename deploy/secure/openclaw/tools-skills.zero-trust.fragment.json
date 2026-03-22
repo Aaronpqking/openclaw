@@ -15,7 +15,7 @@
   "tools": {
     "profile": "minimal",
     "alsoAllow": ["group:web", "browser", "nodes", "cron"],
-    "deny": ["group:fs", "group:runtime", "canvas", "gateway", "message"]
+    "deny": ["group:fs", "group:runtime", "canvas", "gateway"]
   },
   "skills": {
     "allowBundled": [],

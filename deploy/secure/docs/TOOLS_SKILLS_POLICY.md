@@ -14,7 +14,7 @@ Optional WhatsApp + coding overlay:
 
 - `tools.profile: "minimal"` starts from `session_status` only.
 - `tools.alsoAllow` adds reviewed tools on top of the `minimal` profile without collapsing the toolset to `session_status`.
-- `tools.deny` blocks filesystem mutation/read tools, runtime shell tools, `canvas`, `gateway`, and `message`.
+- `tools.deny` in the zero-trust fragment blocks `group:fs`, `group:runtime`, `canvas`, and `gateway` (it does **not** deny `message`, so you can combine overlays that allow WhatsApp sends). The WhatsApp overlay additionally denies `gateway` and `canvas` while keeping `message` available for allowlisted operators.
 - `browser.evaluateEnabled: false` disables browser JS eval and `wait --fn`.
 - `commands.nativeSkills: false` disables native skill command registration.
 - `commands.bash`, `commands.config`, `commands.mcp`, `commands.plugins`, `commands.debug`, and `commands.restart` stay off.

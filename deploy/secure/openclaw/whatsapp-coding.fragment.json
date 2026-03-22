@@ -38,7 +38,7 @@
       "session_status",
       "browser"
     ],
-    "deny": ["gateway", "message", "canvas"],
+    "deny": ["gateway", "canvas"],
     "elevated": {
       "enabled": true,
       "allowFrom": {
