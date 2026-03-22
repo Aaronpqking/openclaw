@@ -111,6 +111,139 @@ FROM build AS runtime-assets
 RUN CI=true pnpm prune --prod && \
     find dist -type f \( -name '*.d.ts' -o -name '*.d.mts' -o -name '*.d.cts' -o -name '*.map' \) -delete
 
+# ── Secure runtime fast-path (low-disk hosts) ────────────────────────────
+# This target reuses runtime-assets directly to avoid copying a second full
+# node_modules tree into another stage, which can fail on small VPS disks.
+FROM runtime-assets AS secure-runtime-assets
+
+WORKDIR /app
+
+# Install system utilities present in bookworm but missing in bookworm-slim.
+RUN --mount=type=cache,id=openclaw-bookworm-apt-cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,id=openclaw-bookworm-apt-lists,target=/var/lib/apt,sharing=locked \
+    apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get upgrade -y --no-install-recommends && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      procps hostname curl git lsof openssl
+
+RUN chown node:node /app
+
+# In npm-installed Docker images, prefer the copied source extension tree for
+# bundled discovery so package metadata that points at source entries stays valid.
+ENV OPENCLAW_BUNDLED_PLUGINS_DIR=/app/extensions
+
+# Keep pnpm available in the runtime image for container-local workflows.
+# Use a shared Corepack home so the non-root `node` user does not need a
+# first-run network fetch when invoking pnpm.
+ENV COREPACK_HOME=/usr/local/share/corepack
+RUN install -d -m 0755 "$COREPACK_HOME" && \
+    corepack enable && \
+    for attempt in 1 2 3 4 5; do \
+      if corepack prepare "$(node -p "require('./package.json').packageManager")" --activate; then \
+        break; \
+      fi; \
+      if [ "$attempt" -eq 5 ]; then \
+        exit 1; \
+      fi; \
+      sleep $((attempt * 2)); \
+    done && \
+    chmod -R a+rX "$COREPACK_HOME"
+
+# Install additional system packages needed by your skills or extensions.
+# Example: docker build --build-arg OPENCLAW_DOCKER_APT_PACKAGES="python3 wget" .
+ARG OPENCLAW_DOCKER_APT_PACKAGES=""
+RUN --mount=type=cache,id=openclaw-bookworm-apt-cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,id=openclaw-bookworm-apt-lists,target=/var/lib/apt,sharing=locked \
+    if [ -n "$OPENCLAW_DOCKER_APT_PACKAGES" ]; then \
+      apt-get update && \
+      DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends $OPENCLAW_DOCKER_APT_PACKAGES; \
+    fi
+
+# Optionally install the gog CLI for Google Workspace skill flows.
+# Build with: docker build --build-arg OPENCLAW_INSTALL_GOG=1 ...
+# Upstream now documents source builds rather than Linux release tarballs,
+# so we compile a matching binary in a dedicated Go build stage.
+ARG OPENCLAW_INSTALL_GOG=""
+COPY --from=gog-build /out/gog /tmp/gog
+RUN if [ "$OPENCLAW_INSTALL_GOG" = "1" ]; then \
+      install -m 0755 /tmp/gog /usr/local/bin/gog; \
+    fi && \
+    rm -f /tmp/gog
+
+# Optionally install Chromium and Xvfb for browser automation.
+# Build with: docker build --build-arg OPENCLAW_INSTALL_BROWSER=1 ...
+# Adds ~300MB but eliminates the 60-90s Playwright install on every container start.
+ARG OPENCLAW_INSTALL_BROWSER=""
+RUN --mount=type=cache,id=openclaw-bookworm-apt-cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,id=openclaw-bookworm-apt-lists,target=/var/lib/apt,sharing=locked \
+    if [ "$OPENCLAW_INSTALL_BROWSER" = "1" ]; then \
+      apt-get update && \
+      DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends xvfb && \
+      mkdir -p /home/node/.cache/ms-playwright && \
+      PLAYWRIGHT_BROWSERS_PATH=/home/node/.cache/ms-playwright \
+      node /app/node_modules/playwright-core/cli.js install --with-deps chromium && \
+      chown -R node:node /home/node/.cache/ms-playwright; \
+    fi
+
+# Optionally install Docker CLI for sandbox container management.
+# Build with: docker build --build-arg OPENCLAW_INSTALL_DOCKER_CLI=1 ...
+# Adds ~50MB. Only the CLI is installed — no Docker daemon.
+# Required for agents.defaults.sandbox to function in Docker deployments.
+ARG OPENCLAW_INSTALL_DOCKER_CLI=""
+ARG OPENCLAW_DOCKER_GPG_FINGERPRINT="9DC858229FC7DD38854AE2D88D81803C0EBFCD88"
+RUN --mount=type=cache,id=openclaw-bookworm-apt-cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,id=openclaw-bookworm-apt-lists,target=/var/lib/apt,sharing=locked \
+    if [ -n "$OPENCLAW_INSTALL_DOCKER_CLI" ]; then \
+      apt-get update && \
+      DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        ca-certificates curl gnupg && \
+      install -m 0755 -d /etc/apt/keyrings && \
+      # Verify Docker apt signing key fingerprint before trusting it as a root key.
+      # Update OPENCLAW_DOCKER_GPG_FINGERPRINT when Docker rotates release keys.
+      curl -fsSL https://download.docker.com/linux/debian/gpg -o /tmp/docker.gpg.asc && \
+      expected_fingerprint="$(printf '%s' "$OPENCLAW_DOCKER_GPG_FINGERPRINT" | tr '[:lower:]' '[:upper:]' | tr -d '[:space:]')" && \
+      actual_fingerprint="$(gpg --batch --show-keys --with-colons /tmp/docker.gpg.asc | awk -F: '$1 == "fpr" { print toupper($10); exit }')" && \
+      if [ -z "$actual_fingerprint" ] || [ "$actual_fingerprint" != "$expected_fingerprint" ]; then \
+        echo "ERROR: Docker apt key fingerprint mismatch (expected $expected_fingerprint, got ${actual_fingerprint:-<empty>})" >&2; \
+        exit 1; \
+      fi && \
+      gpg --dearmor -o /etc/apt/keyrings/docker.gpg /tmp/docker.gpg.asc && \
+      rm -f /tmp/docker.gpg.asc && \
+      chmod a+r /etc/apt/keyrings/docker.gpg && \
+      printf 'deb [arch=%s signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian bookworm stable\n' \
+        "$(dpkg --print-architecture)" > /etc/apt/sources.list.d/docker.list && \
+      apt-get update && \
+      DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        docker-ce-cli docker-compose-plugin; \
+    fi
+
+# Expose the CLI binary without requiring npm global writes as non-root.
+RUN ln -sf /app/openclaw.mjs /usr/local/bin/openclaw \
+ && chmod 755 /app/openclaw.mjs
+
+ENV NODE_ENV=production
+
+# Security hardening: Run as non-root user
+# The node:24-bookworm image includes a 'node' user (uid 1000)
+# This reduces the attack surface by preventing container escape via root privileges
+USER node
+
+# Start gateway server with default config.
+# Binds to loopback (127.0.0.1) by default for security.
+#
+# IMPORTANT: With Docker bridge networking (-p 18789:18789), loopback bind
+# makes the gateway unreachable from the host. Either:
+#   - Use --network host, OR
+#   - Override --bind to "lan" (0.0.0.0) and set auth credentials
+#
+# Built-in probe endpoints for container health checks:
+#   - GET /healthz (liveness) and GET /readyz (readiness)
+#   - aliases: /health and /ready
+# For external access from host/ingress, override bind to "lan" and set auth.
+HEALTHCHECK --interval=3m --timeout=10s --start-period=15s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:18789/healthz').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+CMD ["node", "openclaw.mjs", "gateway", "--allow-unconfigured"]
+
 # ── Runtime base images ─────────────────────────────────────────
 FROM ${OPENCLAW_NODE_BOOKWORM_IMAGE} AS base-default
 ARG OPENCLAW_NODE_BOOKWORM_DIGEST
