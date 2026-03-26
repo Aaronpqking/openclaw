@@ -1,0 +1,24 @@
+{
+  "channels": {
+    "slack": {
+      "enabled": true,
+      "mode": "socket",
+      "dmPolicy": "pairing",
+      "groupPolicy": "allowlist",
+      "replyToMode": "first",
+      "typingReaction": "hourglass_flowing_sand",
+      "channels": {
+        "C_REPLACE_ME": {
+          "requireMention": true
+        }
+      },
+      "verifier": {
+        "enabled": true,
+        "userIds": ["U_REPLACE_VERIFIER"],
+        "channelIds": ["C_REPLACE_ME"],
+        "requireChannelMatch": true,
+        "escalationTo": "+15551234567"
+      }
+    }
+  }
+}

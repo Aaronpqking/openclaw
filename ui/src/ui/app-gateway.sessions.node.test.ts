@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 const loadSessionsMock = vi.fn();
+const handleChatEventMock = vi.hoisted(() => vi.fn<() => "idle" | "error">(() => "idle"));
 
 vi.mock("./app-chat.ts", () => ({
   CHAT_SESSIONS_ACTIVE_MINUTES: 10,
@@ -25,7 +26,7 @@ vi.mock("./controllers/assistant-identity.ts", () => ({
 }));
 vi.mock("./controllers/chat.ts", () => ({
   loadChatHistory: vi.fn(),
-  handleChatEvent: vi.fn(() => "idle"),
+  handleChatEvent: handleChatEventMock,
 }));
 vi.mock("./controllers/devices.ts", () => ({
   loadDevices: vi.fn(),
@@ -97,6 +98,7 @@ function createHost() {
     serverVersion: null,
     sessionKey: "main",
     chatRunId: null,
+    toolStreamOrder: [],
     refreshSessionsAfterChat: new Set<string>(),
     execApprovalQueue: [],
     execApprovalError: null,
@@ -118,5 +120,31 @@ describe("handleGatewayEvent sessions.changed", () => {
 
     expect(loadSessionsMock).toHaveBeenCalledTimes(1);
     expect(loadSessionsMock).toHaveBeenCalledWith(host);
+  });
+});
+
+describe("handleGatewayEvent chat terminal + refreshSessionsAfterChat", () => {
+  it("reloads sessions on chat error when a post-/reset refresh was requested", () => {
+    loadSessionsMock.mockReset();
+    handleChatEventMock.mockReset();
+    handleChatEventMock.mockReturnValue("error");
+    const host = createHost();
+    host.refreshSessionsAfterChat.add("run-reset-1");
+
+    handleGatewayEvent(host, {
+      type: "event",
+      event: "chat",
+      payload: {
+        runId: "run-reset-1",
+        sessionKey: "main",
+        state: "error",
+        errorMessage: "rate limit",
+      },
+      seq: 1,
+    });
+
+    expect(host.refreshSessionsAfterChat.has("run-reset-1")).toBe(false);
+    expect(loadSessionsMock).toHaveBeenCalledTimes(1);
+    expect(loadSessionsMock).toHaveBeenCalledWith(host, { activeMinutes: 10 });
   });
 });

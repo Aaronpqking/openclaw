@@ -87,6 +87,22 @@ export type SlackThreadConfig = {
   initialHistoryLimit?: number;
 };
 
+export type SlackVerifierConfig = {
+  /** Enable verifier-aware routing rules for Slack inbound turns. */
+  enabled?: boolean;
+  /** Verifier sender IDs (typically Slack user IDs like U123...). */
+  userIds?: Array<string | number>;
+  /** Optional Slack channel IDs where verifier messages are expected. */
+  channelIds?: Array<string | number>;
+  /**
+   * If true, verifier sender must also match channelIds (when provided).
+   * Default: false.
+   */
+  requireChannelMatch?: boolean;
+  /** Escalation target for ambiguity notifications (must be WhatsApp E.164). */
+  escalationTo?: string;
+};
+
 export type SlackAccountConfig = {
   /** Optional display name for this account (used in CLI/UI lists). */
   name?: string;
@@ -199,6 +215,8 @@ export type SlackAccountConfig = {
   ackReaction?: string;
   /** Reaction emoji added while processing a reply (e.g. "hourglass_flowing_sand"). Removed when done. Useful as a typing indicator fallback when assistant mode is not enabled. */
   typingReaction?: string;
+  /** Optional verifier routing policy for this Slack account. */
+  verifier?: SlackVerifierConfig;
 };
 
 export type SlackConfig = {

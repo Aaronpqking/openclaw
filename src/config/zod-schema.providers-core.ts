@@ -849,6 +849,16 @@ export const SlackThreadSchema = z
   })
   .strict();
 
+const SlackVerifierSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    userIds: z.array(z.union([z.string(), z.number()])).optional(),
+    channelIds: z.array(z.union([z.string(), z.number()])).optional(),
+    requireChannelMatch: z.boolean().optional(),
+    escalationTo: z.string().optional(),
+  })
+  .strict();
+
 const SlackReplyToModeByChatTypeSchema = z
   .object({
     direct: ReplyToModeSchema.optional(),
@@ -926,6 +936,7 @@ export const SlackAccountSchema = z
     responsePrefix: z.string().optional(),
     ackReaction: z.string().optional(),
     typingReaction: z.string().optional(),
+    verifier: SlackVerifierSchema.optional(),
   })
   .strict()
   .superRefine((value) => {

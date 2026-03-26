@@ -56,6 +56,8 @@ import { resolveRunTypingPolicy } from "./typing-policy.js";
 
 const AUDIO_PLACEHOLDER_RE = /^<media:audio>(\s*\([^)]*\))?$/i;
 const AUDIO_HEADER_RE = /^\[Audio\b/i;
+const VERIFIER_AMBIGUITY_RE =
+  /\b(ambiguous|ambiguity|conflict(?:ing)? evidence|missing evidence|multiple valid (?:branches|options|paths)|operator choice|needs approval|decision fork)\b/i;
 const normalizeMediaType = (value: string): string => value.split(";")[0]?.trim().toLowerCase();
 
 const isInboundAudioContext = (ctx: FinalizedMsgContext): boolean => {
@@ -226,15 +228,19 @@ export async function dispatchReplyFromConfig(params: {
   const surfaceChannel = normalizeMessageChannel(ctx.Surface);
   // Prefer provider channel because surface may carry origin metadata in relayed flows.
   const currentSurface = providerChannel ?? surfaceChannel;
+  const explicitDeliverRoute = ctx.ExplicitDeliverRoute === true;
   const isInternalWebchatTurn =
     currentSurface === INTERNAL_MESSAGE_CHANNEL &&
     (surfaceChannel === INTERNAL_MESSAGE_CHANNEL || !surfaceChannel) &&
-    ctx.ExplicitDeliverRoute !== true;
+    !explicitDeliverRoute;
   const shouldRouteToOriginating = Boolean(
     !isInternalWebchatTurn &&
     isRoutableChannel(originatingChannel) &&
     originatingTo &&
     originatingChannel !== currentSurface,
+  );
+  logVerbose(
+    `dispatch-from-config: route-decision surface=${currentSurface ?? "unknown"} origin=${originatingChannel ?? "none"} explicit=${explicitDeliverRoute} route=${shouldRouteToOriginating ? "origin" : "dispatcher"}`,
   );
   const shouldSuppressTyping =
     shouldRouteToOriginating || originatingChannel === INTERNAL_MESSAGE_CHANNEL;
@@ -276,6 +282,50 @@ export async function dispatchReplyFromConfig(params: {
       logVerbose(`dispatch-from-config: route-reply failed: ${result.error ?? "unknown error"}`);
     }
   };
+
+  const rawInboundText =
+    (typeof ctx.RawBody === "string" && ctx.RawBody.trim()) ||
+    (typeof ctx.BodyForAgent === "string" && ctx.BodyForAgent.trim()) ||
+    (typeof ctx.Body === "string" && ctx.Body.trim()) ||
+    "";
+
+  if (ctx.VerifierSource === true) {
+    const escalationTo =
+      typeof ctx.VerifierEscalationTo === "string" ? ctx.VerifierEscalationTo.trim() : "";
+    const shouldEscalate = VERIFIER_AMBIGUITY_RE.test(rawInboundText);
+    if (shouldEscalate && escalationTo) {
+      const escalationPayload: ReplyPayload = {
+        text: [
+          "Verifier escalation required.",
+          `issue: ${rawInboundText.slice(0, 400)}`,
+          "options: clarify evidence, pick branch A, pick branch B",
+          "risk/tradeoff: wrong branch may cause incorrect execution",
+          "recommended default: hold execution until operator approval",
+          "exact approval needed: confirm selected branch and proceed",
+        ].join("\n"),
+      };
+      const result = await routeReply({
+        payload: escalationPayload,
+        channel: "whatsapp",
+        to: escalationTo,
+        sessionKey: ctx.SessionKey,
+        accountId: ctx.AccountId,
+        threadId: routeThreadId,
+        cfg,
+        isGroup: false,
+      });
+      if (!result.ok) {
+        logVerbose(
+          `dispatch-from-config: verifier escalation route failed: ${result.error ?? "unknown error"}`,
+        );
+      }
+    }
+    recordProcessed("completed", {
+      reason: shouldEscalate ? "verifier_no_reply_escalated" : "verifier_no_reply",
+    });
+    markIdle("message_completed");
+    return { queuedFinal: false, counts: dispatcher.getQueuedCounts() };
+  }
 
   const sendBindingNotice = async (
     payload: ReplyPayload,

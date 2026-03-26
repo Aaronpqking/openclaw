@@ -182,6 +182,10 @@ export type MsgContext = {
    * Used for hook confirmation messages like "Session context saved to memory".
    */
   HookMessages?: string[];
+  /** True when inbound message came from configured Slack verifier. */
+  VerifierSource?: boolean;
+  /** WhatsApp escalation recipient for verifier ambiguity notices. */
+  VerifierEscalationTo?: string;
 };
 
 export type FinalizedMsgContext = Omit<MsgContext, "CommandAuthorized"> & {

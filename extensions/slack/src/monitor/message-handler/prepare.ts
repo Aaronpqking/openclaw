@@ -108,6 +108,53 @@ type SlackRoutingContext = {
   historyKey: string;
 };
 
+function normalizeVerifierEntries(values?: Array<string | number>): Set<string> {
+  const out = new Set<string>();
+  for (const value of values ?? []) {
+    const normalized = String(value).trim().toLowerCase();
+    if (normalized) {
+      out.add(normalized);
+    }
+  }
+  return out;
+}
+
+function resolveSlackVerifierMatch(params: {
+  verifier:
+    | {
+        enabled?: boolean;
+        userIds?: Array<string | number>;
+        channelIds?: Array<string | number>;
+        requireChannelMatch?: boolean;
+        escalationTo?: string;
+      }
+    | undefined;
+  senderId: string;
+  channelId: string;
+}) {
+  const verifier = params.verifier;
+  if (!verifier || verifier.enabled === false) {
+    return { isVerifierSource: false, escalationTo: undefined as string | undefined };
+  }
+  const userIds = normalizeVerifierEntries(verifier.userIds);
+  if (userIds.size === 0 || !userIds.has(params.senderId.trim().toLowerCase())) {
+    return { isVerifierSource: false, escalationTo: undefined as string | undefined };
+  }
+  const channelIds = normalizeVerifierEntries(verifier.channelIds);
+  if (
+    verifier.requireChannelMatch === true &&
+    channelIds.size > 0 &&
+    !channelIds.has(params.channelId.trim().toLowerCase())
+  ) {
+    return { isVerifierSource: false, escalationTo: undefined as string | undefined };
+  }
+  return {
+    isVerifierSource: true,
+    escalationTo:
+      typeof verifier.escalationTo === "string" ? verifier.escalationTo.trim() : undefined,
+  };
+}
+
 async function resolveSlackConversationContext(params: {
   ctx: SlackMonitorContext;
   account: ResolvedSlackAccount;
@@ -419,6 +466,11 @@ export async function prepareSlackMessage(params: {
     logVerbose(`Blocked unauthorized slack sender ${senderId} (not in channel users)`);
     return null;
   }
+  const verifierMatch = resolveSlackVerifierMatch({
+    verifier: account.config.verifier,
+    senderId,
+    channelId: message.channel,
+  });
 
   const allowTextCommands = shouldHandleTextCommands({
     cfg,
@@ -726,6 +778,8 @@ export async function prepareSlackMessage(params: {
         ? effectiveMedia.map((m) => m.contentType ?? "")
         : undefined,
     CommandAuthorized: commandAuthorized,
+    VerifierSource: verifierMatch.isVerifierSource,
+    VerifierEscalationTo: verifierMatch.escalationTo,
     OriginatingChannel: "slack" as const,
     OriginatingTo: slackTo,
     NativeChannelId: message.channel,
