@@ -1,0 +1,29 @@
+{
+  "agents": {
+    "defaults": {
+      "model": {
+        "primary": "openai/gpt-5.4-mini",
+        "fallbacks": ["openai/gpt-5.4"]
+      },
+      "heartbeat": {
+        "every": "30m",
+        "model": "openai/gpt-5.4-nano",
+        "lightContext": true,
+        "isolatedSession": true
+      },
+      "compaction": {
+        "reserveTokensFloor": 24000,
+        "postCompactionSections": ["Session Startup", "Red Lines"],
+        "model": "openai/gpt-5.4-mini",
+        "memoryFlush": {
+          "enabled": true,
+          "softThresholdTokens": 6000,
+          "forceFlushTranscriptBytes": "2mb"
+        }
+      },
+      "memorySearch": {
+        "enabled": false
+      }
+    }
+  }
+}

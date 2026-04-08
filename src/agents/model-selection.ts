@@ -613,6 +613,9 @@ export function resolveAllowedModelRef(params: {
   if (!status.allowed) {
     return { error: `model not allowed: ${status.key}` };
   }
+  if (status.allowAny && !status.inCatalog) {
+    return { error: `model not configured: ${status.key}` };
+  }
 
   return { ref: resolved.ref, key: status.key };
 }

@@ -249,6 +249,21 @@ describe("fs-safe", () => {
     await expect(fs.readFile(path.join(root, "nested", "out.txt"), "utf8")).resolves.toBe("hello");
   });
 
+  it("rejects overwriting protected governance files within root", async () => {
+    const root = await tempDirs.make("openclaw-fs-safe-root-");
+    const targetPath = path.join(root, "SOUL.md");
+    await fs.writeFile(targetPath, "original", "utf8");
+
+    await expect(
+      writeFileWithinRoot({
+        rootDir: root,
+        relativePath: "SOUL.md",
+        data: "mutated",
+      }),
+    ).rejects.toMatchObject({ code: "governance-protected" });
+    await expect(fs.readFile(targetPath, "utf8")).resolves.toBe("original");
+  });
+
   it("appends to a file within root safely", async () => {
     const root = await tempDirs.make("openclaw-fs-safe-root-");
     const targetPath = path.join(root, "nested", "out.txt");
@@ -263,6 +278,22 @@ describe("fs-safe", () => {
     });
 
     await expect(fs.readFile(targetPath, "utf8")).resolves.toBe("seed\nnext");
+  });
+
+  it("rejects appending to protected governance files within root", async () => {
+    const root = await tempDirs.make("openclaw-fs-safe-root-");
+    const targetPath = path.join(root, "CHANNELS.md");
+    await fs.writeFile(targetPath, "original", "utf8");
+
+    await expect(
+      appendFileWithinRoot({
+        rootDir: root,
+        relativePath: "CHANNELS.md",
+        data: "extra",
+        prependNewlineIfNeeded: true,
+      }),
+    ).rejects.toMatchObject({ code: "governance-protected" });
+    await expect(fs.readFile(targetPath, "utf8")).resolves.toBe("original");
   });
 
   it("copies a file within root safely", async () => {

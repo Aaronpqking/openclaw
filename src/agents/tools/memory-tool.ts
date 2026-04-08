@@ -127,11 +127,12 @@ export function createMemorySearchTool(options: {
           });
           const status = memory.manager.status();
           const decorated = decorateCitations(rawResults, includeCitations);
+          const reranked = rerankMemorySearchResults(query, decorated);
           const resolved = resolveMemoryBackendConfig({ cfg, agentId });
           const results =
             status.backend === "qmd"
-              ? clampResultsByInjectedChars(decorated, resolved.qmd?.limits.maxInjectedChars)
-              : decorated;
+              ? clampResultsByInjectedChars(reranked, resolved.qmd?.limits.maxInjectedChars)
+              : reranked;
           const searchMode = (status.custom as { searchMode?: string } | undefined)?.searchMode;
           return jsonResult({
             results,
@@ -256,6 +257,98 @@ function clampResultsByInjectedChars(
     }
   }
   return clamped;
+}
+
+function rerankMemorySearchResults(
+  query: string,
+  results: MemorySearchResult[],
+  now: Date = new Date(),
+): MemorySearchResult[] {
+  if (results.length < 2) {
+    return results;
+  }
+  const normalizedQuery = query.trim().toLowerCase();
+  if (!normalizedQuery) {
+    return results;
+  }
+  const todayIso = now.toISOString().slice(0, 10);
+  const queryTokens = Array.from(
+    new Set(
+      normalizedQuery
+        .split(/[^a-z0-9-]+/i)
+        .map((token) => token.trim())
+        .filter((token) => token.length >= 3),
+    ),
+  );
+  const wantsToday = /\btoday\b|\bsaved today\b|\bcurrent\b/.test(normalizedQuery);
+  const wantsToken = /\btoken\b/.test(normalizedQuery);
+  const wantsPhrase = /\bphrase\b/.test(normalizedQuery);
+  const wantsMemoryProof = /\bmemory proof\b/.test(normalizedQuery);
+  return results
+    .map((entry, index) => ({
+      entry,
+      index,
+      score:
+        entry.score +
+        computeMemoryResultBonus(entry, {
+          todayIso,
+          queryTokens,
+          wantsToday,
+          wantsToken,
+          wantsPhrase,
+          wantsMemoryProof,
+        }),
+    }))
+    .toSorted((left, right) => {
+      if (right.score !== left.score) {
+        return right.score - left.score;
+      }
+      if (right.entry.score !== left.entry.score) {
+        return right.entry.score - left.entry.score;
+      }
+      return left.index - right.index;
+    })
+    .map(({ entry }) => entry);
+}
+
+function computeMemoryResultBonus(
+  entry: MemorySearchResult,
+  params: {
+    todayIso: string;
+    queryTokens: string[];
+    wantsToday: boolean;
+    wantsToken: boolean;
+    wantsPhrase: boolean;
+    wantsMemoryProof: boolean;
+  },
+): number {
+  const haystack = `${entry.path}\n${entry.snippet}`.toLowerCase();
+  let bonus = 0;
+  const isCurrentDaily = entry.path.endsWith(`memory/${params.todayIso}.md`);
+  if (params.wantsToday && isCurrentDaily) {
+    bonus += 0.18;
+  }
+  let lexicalMatches = 0;
+  for (const token of params.queryTokens) {
+    if (!haystack.includes(token)) {
+      continue;
+    }
+    lexicalMatches += 1;
+    bonus += token.length >= 8 ? 0.04 : 0.02;
+  }
+  if (lexicalMatches >= 3) {
+    bonus += 0.04;
+  }
+  if (params.wantsToken && /(?:^|\n)\s*[-*]?\s*token\s*:/m.test(entry.snippet)) {
+    bonus += 0.16;
+  }
+  if (params.wantsPhrase && /(?:^|\n)\s*[-*]?\s*phrase\s*:/m.test(entry.snippet)) {
+    bonus += 0.1;
+  }
+  if (params.wantsMemoryProof && /\bmemory proof\b/i.test(entry.snippet)) {
+    bonus += 0.1;
+  }
+  return bonus;
 }
 
 function buildMemorySearchUnavailableResult(error: string | undefined) {

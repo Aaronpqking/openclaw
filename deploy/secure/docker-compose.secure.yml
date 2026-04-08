@@ -6,6 +6,9 @@ services:
       target: secure-runtime-assets
       args:
         OPENCLAW_INSTALL_BROWSER: ${OPENCLAW_INSTALL_BROWSER:-1}
+        # Secure runtime requires gog for deterministic Google Workspace routing.
+        # Override to 0 only for explicit non-GWorkspace images.
+        OPENCLAW_BUILD_GOG: ${OPENCLAW_BUILD_GOG:-1}
         OPENCLAW_INSTALL_GOG: ${OPENCLAW_INSTALL_GOG:-1}
     image: openclaw:secure-mvp
     init: true
@@ -24,7 +27,7 @@ services:
       OPENCLAW_GATEWAY_PASSWORD: ""
     read_only: true
     tmpfs:
-      - /tmp:rw,noexec,nosuid,nodev,size=256m
+      - /tmp:rw,noexec,nosuid,nodev,size=256m,mode=1777
       - /run:rw,noexec,nosuid,nodev,size=16m
     security_opt:
       - no-new-privileges:true

@@ -1001,6 +1001,10 @@ async function agentCommandInternal(
       allowedModelCatalog = allowed.allowedCatalog;
       allowAnyModel = allowed.allowAny ?? false;
     }
+    const catalogHasModelRef = (candidateProvider: string, candidateModel: string): boolean => {
+      const key = modelKey(candidateProvider, candidateModel);
+      return (modelCatalog ?? []).some((entry) => modelKey(entry.provider, entry.id) === key);
+    };
 
     if (sessionEntry && sessionStore && sessionKey && hasStoredOverride) {
       const entry = sessionEntry;
@@ -1065,6 +1069,15 @@ async function agentCommandInternal(
       ) {
         throw new Error(
           `Model override "${sanitizeForLog(explicitRef.provider)}/${sanitizeForLog(explicitRef.model)}" is not allowed for agent "${sessionAgentId}".`,
+        );
+      }
+      if (
+        !isCliProvider(explicitRef.provider, cfg) &&
+        allowAnyModel &&
+        !catalogHasModelRef(explicitRef.provider, explicitRef.model)
+      ) {
+        throw new Error(
+          `Model override "${sanitizeForLog(explicitRef.provider)}/${sanitizeForLog(explicitRef.model)}" is not configured for this runtime.`,
         );
       }
       provider = explicitRef.provider;

@@ -161,6 +161,10 @@ export class GatewayBrowserClient {
 
   constructor(private opts: GatewayBrowserClientOptions) {}
 
+  get url() {
+    return this.opts.url;
+  }
+
   start() {
     this.closed = false;
     this.connect();
@@ -332,6 +336,7 @@ export class GatewayBrowserClient {
         if (hello?.auth?.deviceToken && deviceIdentity) {
           storeDeviceAuthToken({
             deviceId: deviceIdentity.deviceId,
+            gatewayUrl: this.opts.url,
             role: hello.auth.role ?? role,
             token: hello.auth.deviceToken,
             scopes: hello.auth.scopes ?? [],
@@ -373,11 +378,15 @@ export class GatewayBrowserClient {
           this.pendingConnectError = undefined;
         }
         if (
-          selectedAuth.canFallbackToShared &&
+          selectedAuth.storedToken &&
           deviceIdentity &&
           connectErrorCode === ConnectErrorDetailCodes.AUTH_DEVICE_TOKEN_MISMATCH
         ) {
-          clearDeviceAuthToken({ deviceId: deviceIdentity.deviceId, role });
+          clearDeviceAuthToken({
+            deviceId: deviceIdentity.deviceId,
+            gatewayUrl: this.opts.url,
+            role,
+          });
         }
         this.ws?.close(CONNECT_FAILED_CLOSE_CODE, "connect failed");
       });
@@ -445,6 +454,7 @@ export class GatewayBrowserClient {
     const authPassword = this.opts.password?.trim() || undefined;
     const storedToken = loadDeviceAuthToken({
       deviceId: params.deviceId,
+      gatewayUrl: this.opts.url,
       role: params.role,
     })?.token;
     const shouldUseDeviceRetryToken =

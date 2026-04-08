@@ -63,6 +63,7 @@ function makeProcessMessageArgs(params: {
 
 function createWhatsAppDirectStreamingArgs(params?: {
   rememberSentText?: (text: string | undefined, opts: unknown) => void;
+  messageId?: string;
 }) {
   return makeProcessMessageArgs({
     routeSessionKey: "agent:main:whatsapp:direct:+1555",
@@ -74,7 +75,7 @@ function createWhatsAppDirectStreamingArgs(params?: {
       session: { store: sessionStorePath },
     } as unknown as ReturnType<typeof import("../../../../../src/config/config.js").loadConfig>,
     msg: {
-      id: "msg1",
+      id: params?.messageId ?? "msg1",
       from: "+1555",
       to: "+2000",
       chatType: "direct",
@@ -282,7 +283,9 @@ describe("web processMessage inbound context", () => {
 
   it("suppresses non-final WhatsApp payload delivery", async () => {
     const rememberSentText = vi.fn();
-    await processMessage(createWhatsAppDirectStreamingArgs({ rememberSentText }));
+    await processMessage(
+      createWhatsAppDirectStreamingArgs({ rememberSentText, messageId: "msg-final-1" }),
+    );
 
     // oxlint-disable-next-line typescript/no-explicit-any
     const deliver = (capturedDispatchParams as any)?.dispatcherOptions?.deliver as
@@ -296,6 +299,28 @@ describe("web processMessage inbound context", () => {
     expect(rememberSentText).not.toHaveBeenCalled();
 
     await deliver?.({ text: "final payload" }, { kind: "final" });
+    expect(deliverWebReplyMock).toHaveBeenCalledTimes(1);
+    expect(rememberSentText).toHaveBeenCalledTimes(1);
+  });
+
+  it("suppresses duplicate final payload emission for the same inbound message id", async () => {
+    const rememberSentText = vi.fn();
+    await processMessage(
+      createWhatsAppDirectStreamingArgs({
+        rememberSentText,
+        messageId: "msg-duplicate-final-1",
+      }),
+    );
+
+    // oxlint-disable-next-line typescript/no-explicit-any
+    const deliver = (capturedDispatchParams as any)?.dispatcherOptions?.deliver as
+      | ((payload: { text?: string }, info: { kind: "tool" | "block" | "final" }) => Promise<void>)
+      | undefined;
+    expect(deliver).toBeTypeOf("function");
+
+    await deliver?.({ text: "same final payload" }, { kind: "final" });
+    await deliver?.({ text: "same final payload" }, { kind: "final" });
+
     expect(deliverWebReplyMock).toHaveBeenCalledTimes(1);
     expect(rememberSentText).toHaveBeenCalledTimes(1);
   });

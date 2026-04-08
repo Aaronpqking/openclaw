@@ -8,6 +8,7 @@ import path from "node:path";
 import { logWarn } from "../logger.js";
 import { sameFileIdentity } from "./file-identity.js";
 import { runPinnedWriteHelper } from "./fs-pinned-write-helper.js";
+import { assertGovernanceMutationAllowed, GovernanceProtectionError } from "./governance-files.js";
 import { expandHomePrefix } from "./home-dir.js";
 import { assertNoPathAliasEscape } from "./path-alias-guards.js";
 import {
@@ -24,7 +25,8 @@ export type SafeOpenErrorCode =
   | "symlink"
   | "not-file"
   | "path-mismatch"
-  | "too-large";
+  | "too-large"
+  | "governance-protected";
 
 export class SafeOpenError extends Error {
   code: SafeOpenErrorCode;
@@ -385,6 +387,18 @@ export async function openWritableFileWithinRoot(params: {
   truncateExisting?: boolean;
   append?: boolean;
 }): Promise<SafeWritableOpenResult> {
+  try {
+    assertGovernanceMutationAllowed({
+      rootDir: params.rootDir,
+      relativePath: params.relativePath,
+      operation: params.append ? "append" : "write",
+    });
+  } catch (err) {
+    if (err instanceof GovernanceProtectionError) {
+      throw new SafeOpenError(err.code, err.message, { cause: err });
+    }
+    throw err;
+  }
   const { rootReal, rootWithSep, resolved } = await resolvePathWithinRoot(params);
   try {
     await assertNoPathAliasEscape({
@@ -671,6 +685,18 @@ async function resolvePinnedWriteTargetWithinRoot(params: {
   basename: string;
   mode: number;
 }> {
+  try {
+    assertGovernanceMutationAllowed({
+      rootDir: params.rootDir,
+      relativePath: params.relativePath,
+      operation: "write",
+    });
+  } catch (err) {
+    if (err instanceof GovernanceProtectionError) {
+      throw new SafeOpenError(err.code, err.message, { cause: err });
+    }
+    throw err;
+  }
   const { rootReal, rootWithSep, resolved } = await resolvePathWithinRoot(params);
   try {
     await assertNoPathAliasEscape({

@@ -4,6 +4,7 @@ import {
   buildExecApprovalPendingReplyPayload,
   buildExecApprovalUnavailableReplyPayload,
 } from "../infra/exec-approval-reply.js";
+import { createSubsystemLogger } from "../logging/subsystem.js";
 import { getGlobalHookRunner } from "../plugins/hook-runner-global.js";
 import type { PluginHookAfterToolCallEvent } from "../plugins/types.js";
 import { normalizeTextForComparison } from "./pi-embedded-helpers.js";
@@ -23,6 +24,11 @@ import {
 } from "./pi-embedded-subscribe.tools.js";
 import { inferToolMetaFromArgs } from "./pi-embedded-utils.js";
 import { consumeAdjustedParamsForToolCall } from "./pi-tools.before-tool-call.js";
+import {
+  markLiveSourceEscalation,
+  markMemoryLayerSelection,
+  peekRetrievalTraceModelInfo,
+} from "./retrieval-trace.js";
 import { buildToolMutationState, isSameToolMutationAction } from "./tool-mutation.js";
 import { normalizeToolName } from "./tool-policy.js";
 
@@ -30,6 +36,237 @@ type ToolStartRecord = {
   startTime: number;
   args: unknown;
 };
+
+type RouteAuditState = {
+  sawAllowlistDeny: boolean;
+  sawShellProbeBlock: boolean;
+  browserAttempted: boolean;
+  browserFailed: boolean;
+  gogAttempted: boolean;
+  taskCompletedVerified: boolean;
+};
+
+export type RouteAuditSummary = {
+  saw_allowlist_deny: boolean;
+  shell_probe_attempted: boolean;
+  browser_attempted: boolean;
+  browser_failed: boolean;
+  gog_attempted: boolean;
+  task_completed_verified: boolean;
+};
+
+const routeAuditByRun = new Map<string, RouteAuditState>();
+const MAX_ROUTE_AUDIT_RUNS = 512;
+const routeAuditLog = createSubsystemLogger("agents/route-audit");
+
+function readExecCommand(args: unknown): string {
+  if (!args || typeof args !== "object") {
+    return "";
+  }
+  const command = (args as Record<string, unknown>).command;
+  return typeof command === "string" ? command.trim() : "";
+}
+
+function resolveGogService(command: string): "gmail" | "calendar" | "drive" | undefined {
+  const normalized = command.trim().toLowerCase();
+  if (!normalized.startsWith("gog ")) {
+    return undefined;
+  }
+  if (/\bgmail\b/.test(normalized)) {
+    return "gmail";
+  }
+  if (/\bcalendar\b/.test(normalized)) {
+    return "calendar";
+  }
+  if (/\bdrive\b/.test(normalized)) {
+    return "drive";
+  }
+  return undefined;
+}
+
+function readMemoryPath(args: unknown): string | undefined {
+  if (!args || typeof args !== "object") {
+    return undefined;
+  }
+  const record = args as Record<string, unknown>;
+  const raw =
+    typeof record.path === "string"
+      ? record.path
+      : typeof record.file_path === "string"
+        ? record.file_path
+        : undefined;
+  return typeof raw === "string" ? raw.trim() : undefined;
+}
+
+function readMemoryPathFromResult(result: unknown): string | undefined {
+  if (!result || typeof result !== "object") {
+    return undefined;
+  }
+  const details =
+    (result as Record<string, unknown>).details &&
+    typeof (result as Record<string, unknown>).details === "object"
+      ? ((result as Record<string, unknown>).details as Record<string, unknown>)
+      : (result as Record<string, unknown>);
+  const directPath =
+    typeof details.path === "string"
+      ? details.path
+      : typeof details.file_path === "string"
+        ? details.file_path
+        : undefined;
+  if (typeof directPath === "string" && directPath.trim()) {
+    return directPath.trim();
+  }
+  const results = Array.isArray(details.results) ? details.results : [];
+  for (const entry of results) {
+    if (!entry || typeof entry !== "object") {
+      continue;
+    }
+    const entryPath = (entry as Record<string, unknown>).path;
+    if (typeof entryPath === "string" && entryPath.trim()) {
+      return entryPath.trim();
+    }
+  }
+  return undefined;
+}
+
+function isMemoryLayerPath(pathValue: string | undefined): boolean {
+  const normalized = pathValue?.trim().replace(/\\/g, "/") ?? "";
+  if (!normalized) {
+    return false;
+  }
+  return (
+    normalized === "MEMORY.md" ||
+    normalized.endsWith("/MEMORY.md") ||
+    normalized.includes("/memory/")
+  );
+}
+
+function getRouteAuditState(runId: string): RouteAuditState {
+  const existing = routeAuditByRun.get(runId);
+  if (existing) {
+    return existing;
+  }
+  const created: RouteAuditState = {
+    sawAllowlistDeny: false,
+    sawShellProbeBlock: false,
+    browserAttempted: false,
+    browserFailed: false,
+    gogAttempted: false,
+    taskCompletedVerified: false,
+  };
+  routeAuditByRun.set(runId, created);
+  if (routeAuditByRun.size > MAX_ROUTE_AUDIT_RUNS) {
+    const oldest = routeAuditByRun.keys().next().value;
+    if (oldest) {
+      routeAuditByRun.delete(oldest);
+    }
+  }
+  return created;
+}
+
+function emitRouteReason(params: {
+  runId: string;
+  reasonCode:
+    | "runtime_context_selected"
+    | "runtime_context_missing_auth"
+    | "gog_exec_route_selected"
+    | "exec_route_not_applicable"
+    | "exec_denied_allowlist"
+    | "browser_attach_not_required"
+    | "browser_attach_failed"
+    | "route_fallback_used"
+    | "task_completed_verified";
+  toolName: string;
+  toolCallId: string;
+  detail?: string;
+  source?: string;
+  routeChosen?: string;
+  finalStatus?: string;
+  verificationStatus?: "verified" | "unverified";
+}) {
+  const routeState = getRouteAuditState(params.runId);
+  const modelInfo = peekRetrievalTraceModelInfo(params.runId);
+  const routeAuditData = {
+    phase: "route_audit" as const,
+    reasonCode: params.reasonCode,
+    toolName: params.toolName,
+    toolCallId: params.toolCallId,
+    detail: params.detail,
+    source: params.source,
+    route_chosen: params.routeChosen ?? null,
+    final_status: params.finalStatus ?? null,
+    verification_status: params.verificationStatus ?? "unverified",
+    shell_probe_attempted: routeState.sawShellProbeBlock,
+    browser_attempted: routeState.browserAttempted,
+    gog_attempted: routeState.gogAttempted,
+    requested_model: modelInfo?.requested_model ?? "unknown",
+    resolved_model: modelInfo?.resolved_model ?? "unknown",
+  };
+  if (params.reasonCode === "task_completed_verified") {
+    routeState.taskCompletedVerified = true;
+  }
+  emitAgentEvent({
+    runId: params.runId,
+    stream: "lifecycle",
+    data: routeAuditData,
+  });
+  routeAuditLog.info(`route_audit ${JSON.stringify({ run_id: params.runId, ...routeAuditData })}`);
+}
+
+export function consumeRouteAuditSummaryForRun(runId: string): RouteAuditSummary | null {
+  const state = routeAuditByRun.get(runId);
+  if (!state) {
+    return null;
+  }
+  routeAuditByRun.delete(runId);
+  return {
+    saw_allowlist_deny: state.sawAllowlistDeny,
+    shell_probe_attempted: state.sawShellProbeBlock,
+    browser_attempted: state.browserAttempted,
+    browser_failed: state.browserFailed,
+    gog_attempted: state.gogAttempted,
+    task_completed_verified: state.taskCompletedVerified,
+  };
+}
+
+export function peekRouteAuditSummaryForRun(runId: string): RouteAuditSummary | null {
+  const state = routeAuditByRun.get(runId);
+  if (!state) {
+    return null;
+  }
+  return {
+    saw_allowlist_deny: state.sawAllowlistDeny,
+    shell_probe_attempted: state.sawShellProbeBlock,
+    browser_attempted: state.browserAttempted,
+    browser_failed: state.browserFailed,
+    gog_attempted: state.gogAttempted,
+    task_completed_verified: state.taskCompletedVerified,
+  };
+}
+
+function parseRouteCodeFromError(error: string | undefined): string | undefined {
+  const trimmed = error?.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  const match = /^\[route:([a-z0-9_:-]+)\]\s*/i.exec(trimmed);
+  return match?.[1]?.toLowerCase();
+}
+
+function isMissingRuntimeAuthError(message: string | undefined): boolean {
+  const normalized = message?.toLowerCase() ?? "";
+  if (!normalized) {
+    return false;
+  }
+  return (
+    normalized.includes("not authenticated") ||
+    normalized.includes("credentials missing") ||
+    normalized.includes("invalid_grant") ||
+    normalized.includes("insufficient authentication scopes") ||
+    normalized.includes("missing scope") ||
+    normalized.includes("refresh token")
+  );
+}
 
 /** Track tool execution start data for after_tool_call hook. */
 const toolStartData = new Map<string, ToolStartRecord>();
@@ -338,6 +575,49 @@ export async function handleToolExecutionStart(
   );
 
   const shouldEmitToolEvents = ctx.shouldEmitToolResult();
+  const execCommand = readExecCommand(args);
+  const gogService = toolName === "exec" ? resolveGogService(execCommand) : undefined;
+  const routeState = getRouteAuditState(runId);
+  if (toolName === "browser") {
+    routeState.browserAttempted = true;
+  }
+  if (toolName === "exec" && gogService) {
+    routeState.gogAttempted = true;
+    markLiveSourceEscalation({
+      runId,
+      source: `gog.${gogService}`,
+    });
+    emitRouteReason({
+      runId,
+      reasonCode: "runtime_context_selected",
+      toolName,
+      toolCallId,
+      detail: "google_workspace_runtime",
+      source: `gog.${gogService}`,
+      routeChosen: "gog_exec_runtime_context",
+      finalStatus: "route_selected",
+    });
+    emitRouteReason({
+      runId,
+      reasonCode: "gog_exec_route_selected",
+      toolName,
+      toolCallId,
+      source: `gog.${gogService}`,
+      routeChosen: "gog_exec",
+      finalStatus: "route_selected",
+    });
+    if (routeState.sawAllowlistDeny || routeState.sawShellProbeBlock || routeState.browserFailed) {
+      emitRouteReason({
+        runId,
+        reasonCode: "route_fallback_used",
+        toolName,
+        toolCallId,
+        source: `gog.${gogService}`,
+        routeChosen: "gog_exec",
+        finalStatus: "recovered_after_block",
+      });
+    }
+  }
   emitAgentEvent({
     runId: ctx.params.runId,
     stream: "tool",
@@ -445,6 +725,64 @@ export async function handleToolExecutionEnd(
   ctx.state.toolSummaryById.delete(toolCallId);
   if (isToolError) {
     const errorMessage = extractToolErrorMessage(sanitizedResult);
+    const routeCode = parseRouteCodeFromError(errorMessage);
+    if (routeCode) {
+      if (
+        routeCode === "exec_route_not_applicable" ||
+        routeCode === "browser_attach_not_required"
+      ) {
+        if (routeCode === "exec_route_not_applicable") {
+          getRouteAuditState(runId).sawShellProbeBlock = true;
+        }
+        emitRouteReason({
+          runId,
+          reasonCode: routeCode,
+          toolName,
+          toolCallId,
+          detail: errorMessage,
+          routeChosen: "blocked",
+          finalStatus:
+            routeCode === "exec_route_not_applicable"
+              ? "blocked_non_gog_probe"
+              : "blocked_browser_not_required",
+        });
+      }
+    }
+    if (toolName === "exec" && /allowlist miss/i.test(errorMessage ?? "")) {
+      getRouteAuditState(runId).sawAllowlistDeny = true;
+      emitRouteReason({
+        runId,
+        reasonCode: "exec_denied_allowlist",
+        toolName,
+        toolCallId,
+        detail: errorMessage,
+        routeChosen: "blocked",
+        finalStatus: "blocked_allowlist",
+      });
+    }
+    if (toolName === "browser" && /attach|browser|noVNC|gateway/i.test(errorMessage ?? "")) {
+      getRouteAuditState(runId).browserFailed = true;
+      emitRouteReason({
+        runId,
+        reasonCode: "browser_attach_failed",
+        toolName,
+        toolCallId,
+        detail: errorMessage,
+        routeChosen: "browser",
+        finalStatus: "browser_failed",
+      });
+    }
+    if (toolName === "exec" && isMissingRuntimeAuthError(errorMessage)) {
+      emitRouteReason({
+        runId,
+        reasonCode: "runtime_context_missing_auth",
+        toolName,
+        toolCallId,
+        detail: errorMessage,
+        routeChosen: "blocked",
+        finalStatus: "runtime_auth_missing",
+      });
+    }
     ctx.state.lastToolError = {
       toolName,
       meta,
@@ -467,6 +805,39 @@ export async function handleToolExecutionEnd(
     } else {
       ctx.state.lastToolError = undefined;
     }
+  }
+  const completedExecCommand = readExecCommand(startData?.args);
+  const completedGogService =
+    toolName === "exec" ? resolveGogService(completedExecCommand) : undefined;
+  const memoryPath = readMemoryPath(startData?.args) ?? readMemoryPathFromResult(result);
+  if (
+    !isToolError &&
+    (toolName === "memory_search" ||
+      toolName === "memory_get" ||
+      (toolName === "read" && isMemoryLayerPath(memoryPath)))
+  ) {
+    markMemoryLayerSelection({
+      runId,
+      path: memoryPath,
+    });
+  }
+  if (!isToolError && completedGogService) {
+    markLiveSourceEscalation({
+      runId,
+      source: `gog.${completedGogService}`,
+    });
+  }
+  if (!isToolError && completedGogService) {
+    emitRouteReason({
+      runId,
+      reasonCode: "task_completed_verified",
+      toolName,
+      toolCallId,
+      source: `gog.${completedGogService}`,
+      routeChosen: "gog_exec",
+      finalStatus: "verified_success",
+      verificationStatus: "verified",
+    });
   }
 
   // Commit messaging tool text on success, discard on error.

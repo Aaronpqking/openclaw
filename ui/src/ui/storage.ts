@@ -1,3 +1,9 @@
+import { isSupportedLocale } from "../i18n/index.ts";
+import { getSafeLocalStorage } from "../local-storage.ts";
+import { normalizeGatewayStorageScope } from "./gateway-storage-scope.ts";
+import { inferBasePathFromPathname, normalizeBasePath } from "./navigation.ts";
+import { parseThemeSelection, type ThemeMode, type ThemeName } from "./theme.ts";
+
 const SETTINGS_KEY_PREFIX = "openclaw.control.settings.v1:";
 const LEGACY_SETTINGS_KEY = "openclaw.control.settings.v1";
 const LEGACY_TOKEN_SESSION_KEY = "openclaw.control.token.v1";
@@ -5,7 +11,7 @@ const TOKEN_SESSION_KEY_PREFIX = "openclaw.control.token.v1:";
 const MAX_SCOPED_SESSION_ENTRIES = 10;
 
 function settingsKeyForGateway(gatewayUrl: string): string {
-  return `${SETTINGS_KEY_PREFIX}${normalizeGatewayTokenScope(gatewayUrl)}`;
+  return `${SETTINGS_KEY_PREFIX}${normalizeGatewayStorageScope(gatewayUrl)}`;
 }
 
 type ScopedSessionSelection = {
@@ -19,11 +25,6 @@ type PersistedUiSettings = Omit<UiSettings, "token" | "sessionKey" | "lastActive
   lastActiveSessionKey?: string;
   sessionsByGateway?: Record<string, ScopedSessionSelection>;
 };
-
-import { isSupportedLocale } from "../i18n/index.ts";
-import { getSafeLocalStorage } from "../local-storage.ts";
-import { inferBasePathFromPathname, normalizeBasePath } from "./navigation.ts";
-import { parseThemeSelection, type ThemeMode, type ThemeName } from "./theme.ts";
 
 export type UiSettings = {
   gatewayUrl: string;
@@ -82,27 +83,8 @@ function getSessionStorage(): Storage | null {
   return null;
 }
 
-function normalizeGatewayTokenScope(gatewayUrl: string): string {
-  const trimmed = gatewayUrl.trim();
-  if (!trimmed) {
-    return "default";
-  }
-  try {
-    const base =
-      typeof location !== "undefined"
-        ? `${location.protocol}//${location.host}${location.pathname || "/"}`
-        : undefined;
-    const parsed = base ? new URL(trimmed, base) : new URL(trimmed);
-    const pathname =
-      parsed.pathname === "/" ? "" : parsed.pathname.replace(/\/+$/, "") || parsed.pathname;
-    return `${parsed.protocol}//${parsed.host}${pathname}`;
-  } catch {
-    return trimmed;
-  }
-}
-
 function tokenSessionKeyForGateway(gatewayUrl: string): string {
-  return `${TOKEN_SESSION_KEY_PREFIX}${normalizeGatewayTokenScope(gatewayUrl)}`;
+  return `${TOKEN_SESSION_KEY_PREFIX}${normalizeGatewayStorageScope(gatewayUrl)}`;
 }
 
 function resolveScopedSessionSelection(
@@ -110,7 +92,7 @@ function resolveScopedSessionSelection(
   parsed: PersistedUiSettings,
   defaults: UiSettings,
 ): ScopedSessionSelection {
-  const scope = normalizeGatewayTokenScope(gatewayUrl);
+  const scope = normalizeGatewayStorageScope(gatewayUrl);
   const scoped = parsed.sessionsByGateway?.[scope];
   if (
     scoped &&
@@ -273,7 +255,7 @@ export function saveSettings(next: UiSettings) {
 function persistSettings(next: UiSettings) {
   persistSessionToken(next.gatewayUrl, next.token);
   const storage = getSafeLocalStorage();
-  const scope = normalizeGatewayTokenScope(next.gatewayUrl);
+  const scope = normalizeGatewayStorageScope(next.gatewayUrl);
   const scopedKey = settingsKeyForGateway(next.gatewayUrl);
   let existingSessionsByGateway: Record<string, ScopedSessionSelection> = {};
   try {

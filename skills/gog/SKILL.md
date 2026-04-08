@@ -32,6 +32,48 @@ Setup (once)
 - `gog auth add you@gmail.com --services gmail,calendar,drive,contacts,docs,sheets`
 - `gog auth list`
 
+`invalid_grant` and gateway behavior
+
+- Messages like **`invalid_grant: Token has been expired or revoked`** mean Google rejected the stored refresh token. Run a **full re-auth**; incremental fixes will not restore Gmail until `gog auth add` completes and `gog auth list --check` succeeds.
+- OpenClaw surfaces this class of failure via Google Workspace readiness (`token_invalid_or_expired`). Treat it as **credentials on the host that runs `gog` for the gateway**, not as a generic “tool outage.”
+
+Where tokens must live (critical)
+
+- Tokens are written wherever **`gog auth add`** runs (that user, that machine, that `gog` data directory).
+- If the **OpenClaw gateway** runs on another host (VM, Docker, remote Linux) than your laptop, re-authenticating **only on the Mac** does not fix **`invalid_grant`** on the gateway. Run the same remote step 1/2 flow **on the gateway host** (with its `GOG_ACCOUNT` / keyring / env), or you will keep seeing revoked-token errors remotely.
+
+Remote OAuth troubleshooting (terminal)
+
+1. **`zsh: bad pattern: ^[[200~gog`** (or similar): **Bracketed paste** leaked ANSI into the line. The command never ran. Fix: paste plain text, disable bracketed paste in Terminal/iTerm, or type the command; do not paste through layers that inject control sequences.
+2. **`parse redirect url: invalid redirect URL`**: The **`--auth-url` value was not a real callback**. Do not pass the literal placeholder text `full redirect URL`. Step 2 must receive the **exact** URL from the browser address bar after consent (starts with `http://127.0.0.1:<port>/oauth2/callback?...`).
+3. **`manual auth state mismatch; run remote step 1 again`**: Step 1 stores OAuth **`state=`** locally; step 2 must use the redirect from **that same** step 1 **immediately**. Trying a second authorization **`code=`** with the same **`state=`**, or reusing an old redirect after a failed step 2, breaks the flow. **Fix:** run **one fresh** step 1, complete consent **once**, copy **one** callback URL, run step 2 **once**. If step 2 errors, **start over at step 1** (new `state=`).
+
+Single-cycle remote auth (repeat flags on both steps)
+
+Use the **same** account, **`--services`**, and **`--force-consent`** (if used) on step 1 and step 2:
+
+1. `gog auth add <account> --services gmail,drive,calendar --remote --step 1 --force-consent`
+2. Open `auth_url` in the browser; finish consent **once**.
+3. Copy the **full** callback from the address bar.
+4. `gog auth add <account> --services gmail,drive,calendar --remote --step 2 --auth-url 'PASTE_FULL_CALLBACK_HERE'`
+5. `gog auth list --check`
+6. `gog auth status --account <account>`
+
+Then probe: e.g. `gog gmail search 'newer_than:1d' --max 3 --account <account>`.
+
+Headless macOS / gateway host auth repair
+
+- Treat repeated browser re-auth loops on headless macOS as a Keychain failure mode.
+- Switch gog to the file keyring: `gog auth keyring file`
+- Ensure `GOG_KEYRING_PASSWORD` is present in the **gateway** environment before re-auth.
+- If gog previously used macOS Keychain for this account, remove stale gog Keychain token entries before re-auth.
+- Use the **single-cycle remote auth** steps above on the **host where the gateway runs `gog`**.
+- Verify before claiming success: `gog auth list --check`
+- Check account status: `gog auth status --account <account@example.com>`
+- Never use `--no-input` for auth repair.
+- Never describe auth as complete until `gog auth list --check` passes.
+- If auth still fails, report exact stderr and `gog --version`.
+
 Common commands
 
 - Gmail search: `gog gmail search 'newer_than:7d' --max 10`
@@ -109,7 +151,7 @@ Email Formatting
 Notes
 
 - Set `GOG_ACCOUNT=you@gmail.com` to avoid repeating `--account`.
-- For scripting, prefer `--json` plus `--no-input`.
+- For scripting non-auth commands, prefer `--json`. Use `--no-input` only when you want setup/auth commands to fail instead of prompting.
 - Sheets values can be passed via `--values-json` (recommended) or as inline rows.
 - Docs supports export/cat/copy. In-place edits require a Docs API client (not in gog).
 - Confirm before sending mail or creating events.

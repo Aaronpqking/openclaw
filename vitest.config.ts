@@ -46,6 +46,8 @@ export default defineConfig({
       "ui/src/ui/views/chat.test.ts",
       "ui/src/ui/views/nodes.devices.test.ts",
       "ui/src/ui/views/usage-render-details.test.ts",
+      "ui/src/ui/gateway.node.test.ts",
+      "ui/src/ui/storage.node.test.ts",
       "ui/src/ui/controllers/agents.test.ts",
       "ui/src/ui/controllers/chat.test.ts",
       "ui/src/ui/controllers/sessions.test.ts",

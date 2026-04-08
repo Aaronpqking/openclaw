@@ -362,6 +362,39 @@ describe("applyPatch", () => {
     });
   });
 
+  it("rejects patch writes to protected governance docs", async () => {
+    await withTempDir(async (dir) => {
+      const target = path.join(dir, "SOUL.md");
+      await fs.writeFile(target, "original\n", "utf8");
+      const patch = `*** Begin Patch
+*** Update File: SOUL.md
+@@
+-original
++mutated
+*** End Patch`;
+
+      await expect(applyPatch(patch, { cwd: dir })).rejects.toThrow(
+        /operator-approved amendment path/i,
+      );
+      await expect(fs.readFile(target, "utf8")).resolves.toBe("original\n");
+    });
+  });
+
+  it("rejects patch deletes of protected governance docs", async () => {
+    await withTempDir(async (dir) => {
+      const target = path.join(dir, "CHANNELS.md");
+      await fs.writeFile(target, "original\n", "utf8");
+      const patch = `*** Begin Patch
+*** Delete File: CHANNELS.md
+*** End Patch`;
+
+      await expect(applyPatch(patch, { cwd: dir })).rejects.toThrow(
+        /operator-approved amendment path/i,
+      );
+      await expect(fs.readFile(target, "utf8")).resolves.toBe("original\n");
+    });
+  });
+
   it("uses container paths when the sandbox bridge has no local host path", async () => {
     const files = new Map<string, string>([["/sandbox/source.txt", "before\n"]]);
     const bridge = {

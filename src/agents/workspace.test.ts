@@ -66,6 +66,10 @@ function expectSubagentAllowedBootstrapNames(files: WorkspaceBootstrapFile[]) {
   expect(names).toContain("SOUL.md");
   expect(names).toContain("IDENTITY.md");
   expect(names).toContain("USER.md");
+  expect(names).toContain("OPERATIONS.md");
+  expect(names).toContain("APPROVALS.md");
+  expect(names).toContain("CHANNELS.md");
+  expect(names).toContain("PROJECTS.md");
   expect(names).not.toContain("HEARTBEAT.md");
   expect(names).not.toContain("BOOTSTRAP.md");
   expect(names).not.toContain("MEMORY.md");
@@ -213,6 +217,19 @@ describe("loadWorkspaceBootstrapFiles", () => {
     expect(getMemoryEntries(files)).toHaveLength(0);
   });
 
+  it("includes optional governance bootstrap files when present", async () => {
+    const tempDir = await makeTempWorkspace("openclaw-workspace-");
+    await writeWorkspaceFile({ dir: tempDir, name: "OPERATIONS.md", content: "ops" });
+    await writeWorkspaceFile({ dir: tempDir, name: "APPROVALS.md", content: "approvals" });
+    await writeWorkspaceFile({ dir: tempDir, name: "PROJECTS.md", content: "projects" });
+
+    const files = await loadWorkspaceBootstrapFiles(tempDir);
+    expect(files.find((file) => file.name === "OPERATIONS.md")?.content).toBe("ops");
+    expect(files.find((file) => file.name === "APPROVALS.md")?.content).toBe("approvals");
+    expect(files.find((file) => file.name === "PROJECTS.md")?.content).toBe("projects");
+    expect(files.some((file) => file.name === "CHANNELS.md")).toBe(false);
+  });
+
   it("treats hardlinked bootstrap aliases as missing", async () => {
     if (process.platform === "win32") {
       return;
@@ -252,6 +269,10 @@ describe("filterBootstrapFilesForSession", () => {
     { name: "TOOLS.md", path: "/w/TOOLS.md", content: "", missing: false },
     { name: "IDENTITY.md", path: "/w/IDENTITY.md", content: "", missing: false },
     { name: "USER.md", path: "/w/USER.md", content: "", missing: false },
+    { name: "OPERATIONS.md", path: "/w/OPERATIONS.md", content: "", missing: false },
+    { name: "APPROVALS.md", path: "/w/APPROVALS.md", content: "", missing: false },
+    { name: "CHANNELS.md", path: "/w/CHANNELS.md", content: "", missing: false },
+    { name: "PROJECTS.md", path: "/w/PROJECTS.md", content: "", missing: false },
     { name: "HEARTBEAT.md", path: "/w/HEARTBEAT.md", content: "", missing: false },
     { name: "BOOTSTRAP.md", path: "/w/BOOTSTRAP.md", content: "", missing: false },
     { name: "MEMORY.md", path: "/w/MEMORY.md", content: "", missing: false },

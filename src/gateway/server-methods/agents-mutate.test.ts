@@ -532,6 +532,39 @@ describe("agents.files.list", () => {
     const names = await listAgentFileNames();
     expect(names).toContain("BOOTSTRAP.md");
   });
+
+  it("lists optional governance files only when they exist", async () => {
+    const workspace = "/workspace/test-agent";
+    const operationsPath = path.resolve(workspace, "OPERATIONS.md");
+    const operationsStat = makeFileStat({ size: 42, mtimeMs: 1700, dev: 9, ino: 42 });
+
+    mocks.fsRealpath.mockImplementation(async (p: string) => {
+      if (p === workspace) {
+        return workspace;
+      }
+      return p;
+    });
+    mocks.fsLstat.mockImplementation(async (...args: unknown[]) => {
+      const p = typeof args[0] === "string" ? args[0] : "";
+      if (p === operationsPath) {
+        return operationsStat;
+      }
+      throw createEnoentError();
+    });
+    mocks.fsStat.mockImplementation(async (...args: unknown[]) => {
+      const p = typeof args[0] === "string" ? args[0] : "";
+      if (p === operationsPath) {
+        return operationsStat;
+      }
+      throw createEnoentError();
+    });
+
+    const names = await listAgentFileNames();
+    expect(names).toContain("OPERATIONS.md");
+    expect(names).not.toContain("APPROVALS.md");
+    expect(names).not.toContain("CHANNELS.md");
+    expect(names).not.toContain("PROJECTS.md");
+  });
 });
 
 describe("agents.files.get/set symlink safety", () => {
@@ -678,4 +711,23 @@ describe("agents.files.get/set symlink safety", () => {
       }
     },
   );
+
+  it("rejects agents.files.set for governance docs through the runtime surface", async () => {
+    const { respond, promise } = makeCall("agents.files.set", {
+      agentId: "main",
+      name: "SOUL.md",
+      content: "mutated\n",
+    });
+
+    await promise;
+
+    expect(mocks.writeFileWithinRoot).not.toHaveBeenCalled();
+    expect(respond).toHaveBeenCalledWith(
+      false,
+      undefined,
+      expect.objectContaining({
+        message: expect.stringContaining("amendment-only"),
+      }),
+    );
+  });
 });

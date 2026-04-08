@@ -10,6 +10,7 @@ import {
   readFileWithinRoot,
   writeFileWithinRoot,
 } from "../infra/fs-safe.js";
+import { assertGovernanceMutationAllowed } from "../infra/governance-files.js";
 import { detectMime } from "../media/mime.js";
 import { sniffMimeFromBase64 } from "../media/sniff-mime-from-base64.js";
 import type { ImageSanitizationLimits } from "./image-sanitization.js";
@@ -692,6 +693,11 @@ function createSandboxWriteOperations(params: SandboxToolParams) {
       await params.bridge.mkdirp({ filePath: dir, cwd: params.root });
     },
     writeFile: async (absolutePath: string, content: string) => {
+      assertGovernanceMutationAllowed({
+        rootDir: params.root,
+        filePath: absolutePath,
+        operation: "write",
+      });
       await params.bridge.writeFile({ filePath: absolutePath, cwd: params.root, data: content });
     },
   } as const;
@@ -701,8 +707,14 @@ function createSandboxEditOperations(params: SandboxToolParams) {
   return {
     readFile: (absolutePath: string) =>
       params.bridge.readFile({ filePath: absolutePath, cwd: params.root }),
-    writeFile: (absolutePath: string, content: string) =>
-      params.bridge.writeFile({ filePath: absolutePath, cwd: params.root, data: content }),
+    writeFile: async (absolutePath: string, content: string) => {
+      assertGovernanceMutationAllowed({
+        rootDir: params.root,
+        filePath: absolutePath,
+        operation: "write",
+      });
+      await params.bridge.writeFile({ filePath: absolutePath, cwd: params.root, data: content });
+    },
     access: async (absolutePath: string) => {
       const stat = await params.bridge.stat({ filePath: absolutePath, cwd: params.root });
       if (!stat) {
@@ -712,8 +724,13 @@ function createSandboxEditOperations(params: SandboxToolParams) {
   } as const;
 }
 
-async function writeHostFile(absolutePath: string, content: string) {
+async function writeHostFile(root: string, absolutePath: string, content: string) {
   const resolved = path.resolve(absolutePath);
+  assertGovernanceMutationAllowed({
+    rootDir: root,
+    filePath: resolved,
+    operation: "write",
+  });
   await fs.mkdir(path.dirname(resolved), { recursive: true });
   await fs.writeFile(resolved, content, "utf-8");
 }
@@ -728,7 +745,8 @@ function createHostWriteOperations(root: string, options?: { workspaceOnly?: boo
         const resolved = path.resolve(dir);
         await fs.mkdir(resolved, { recursive: true });
       },
-      writeFile: writeHostFile,
+      writeFile: async (absolutePath: string, content: string) =>
+        await writeHostFile(root, absolutePath, content),
     } as const;
   }
 
@@ -742,6 +760,11 @@ function createHostWriteOperations(root: string, options?: { workspaceOnly?: boo
     },
     writeFile: async (absolutePath: string, content: string) => {
       const relative = toRelativeWorkspacePath(root, absolutePath);
+      assertGovernanceMutationAllowed({
+        rootDir: root,
+        relativePath: relative,
+        operation: "write",
+      });
       await writeFileWithinRoot({
         rootDir: root,
         relativePath: relative,
@@ -762,7 +785,8 @@ function createHostEditOperations(root: string, options?: { workspaceOnly?: bool
         const resolved = path.resolve(absolutePath);
         return await fs.readFile(resolved);
       },
-      writeFile: writeHostFile,
+      writeFile: async (absolutePath: string, content: string) =>
+        await writeHostFile(root, absolutePath, content),
       access: async (absolutePath: string) => {
         const resolved = path.resolve(absolutePath);
         await fs.access(resolved);
@@ -782,6 +806,11 @@ function createHostEditOperations(root: string, options?: { workspaceOnly?: bool
     },
     writeFile: async (absolutePath: string, content: string) => {
       const relative = toRelativeWorkspacePath(root, absolutePath);
+      assertGovernanceMutationAllowed({
+        rootDir: root,
+        relativePath: relative,
+        operation: "write",
+      });
       await writeFileWithinRoot({
         rootDir: root,
         relativePath: relative,

@@ -208,6 +208,11 @@ function ensureDir(filePath: string) {
   fs.mkdirSync(dir, { recursive: true });
 }
 
+function isReadOnlyOrPermissionError(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | undefined)?.code;
+  return code === "EACCES" || code === "EPERM" || code === "EROFS";
+}
+
 // Coerce legacy/corrupted allowlists into `ExecAllowlistEntry[]` before we spread
 // entries to add ids (spreading strings creates {"0":"l","1":"s",...}).
 function coerceAllowlistEntries(allowlist: unknown): ExecAllowlistEntry[] | undefined {
@@ -373,6 +378,8 @@ export function saveExecApprovals(file: ExecApprovalsFile) {
 }
 
 export function ensureExecApprovals(): ExecApprovalsFile {
+  const filePath = resolveExecApprovalsPath();
+  const hadFile = fs.existsSync(filePath);
   const loaded = loadExecApprovals();
   const next = normalizeExecApprovals(loaded);
   const socketPath = next.socket?.path?.trim();
@@ -384,7 +391,20 @@ export function ensureExecApprovals(): ExecApprovalsFile {
       token: token && token.length > 0 ? token : generateToken(),
     },
   };
-  saveExecApprovals(updated);
+  const needsPersist =
+    !hadFile ||
+    next.socket?.path !== updated.socket?.path ||
+    next.socket?.token !== updated.socket?.token ||
+    JSON.stringify(next) !== JSON.stringify(loaded);
+  if (needsPersist) {
+    try {
+      saveExecApprovals(updated);
+    } catch (error) {
+      if (!isReadOnlyOrPermissionError(error)) {
+        throw error;
+      }
+    }
+  }
   return updated;
 }
 
@@ -519,7 +539,13 @@ export function recordAllowlistUse(
   );
   agents[target] = { ...existing, allowlist: nextAllowlist };
   approvals.agents = agents;
-  saveExecApprovals(approvals);
+  try {
+    saveExecApprovals(approvals);
+  } catch (error) {
+    if (!isReadOnlyOrPermissionError(error)) {
+      throw error;
+    }
+  }
 }
 
 export function addAllowlistEntry(
@@ -541,7 +567,13 @@ export function addAllowlistEntry(
   allowlist.push({ id: crypto.randomUUID(), pattern: trimmed, lastUsedAt: Date.now() });
   agents[target] = { ...existing, allowlist };
   approvals.agents = agents;
-  saveExecApprovals(approvals);
+  try {
+    saveExecApprovals(approvals);
+  } catch (error) {
+    if (!isReadOnlyOrPermissionError(error)) {
+      throw error;
+    }
+  }
 }
 
 export function minSecurity(a: ExecSecurity, b: ExecSecurity): ExecSecurity {

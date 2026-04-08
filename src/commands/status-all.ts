@@ -16,6 +16,7 @@ import { buildGatewayConnectionDetails, callGateway } from "../gateway/call.js";
 import { normalizeControlUiBasePath } from "../gateway/control-ui-shared.js";
 import { resolveGatewayProbeAuthSafe } from "../gateway/probe-auth.js";
 import { probeGateway } from "../gateway/probe.js";
+import { probeGoogleWorkspaceReadiness } from "../hooks/google-workspace-readiness.js";
 import { collectChannelStatusIssues } from "../infra/channels-status-issues.js";
 import { resolveOpenClawPackageRoot } from "../infra/openclaw-root.js";
 import { resolveOsSummary } from "../infra/os-summary.js";
@@ -239,6 +240,11 @@ export async function statusAllCommand(
             }
           })()
         : null;
+    const googleWorkspace = await probeGoogleWorkspaceReadiness({
+      config: cfg,
+      timeoutMs: 4000,
+      skipActiveProbes: Boolean(process.env.VITEST || process.env.NODE_ENV === "test"),
+    }).catch(() => null);
     const pluginCompatibility = buildPluginCompatibilityNotices({ config: cfg });
 
     const controlUiEnabled = cfg.gateway?.controlUi?.enabled ?? true;
@@ -338,6 +344,12 @@ export async function statusAllCommand(
             ? `${secretDiagnostics.length} diagnostic${secretDiagnostics.length === 1 ? "" : "s"}`
             : "none",
       },
+      {
+        Item: "Google Workspace",
+        Value: googleWorkspace
+          ? `${googleWorkspace.state} · ${googleWorkspace.account ?? "account:auto"}`
+          : "probe unavailable",
+      },
     ];
 
     const lines = await buildStatusAllReportLines({
@@ -362,6 +374,7 @@ export async function statusAllCommand(
         tailscale,
         tailscaleHttpsUrl,
         skillStatus,
+        googleWorkspace,
         pluginCompatibility,
         channelsStatus,
         channelIssues,

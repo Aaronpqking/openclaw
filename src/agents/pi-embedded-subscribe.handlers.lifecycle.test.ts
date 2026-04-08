@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createInlineCodeState } from "../markdown/code-spans.js";
 import { handleAgentEnd } from "./pi-embedded-subscribe.handlers.lifecycle.js";
 import type { EmbeddedPiSubscribeContext } from "./pi-embedded-subscribe.handlers.types.js";
+import { initializeRetrievalTraceForRun, markLiveSourceEscalation } from "./retrieval-trace.js";
 
 vi.mock("../infra/agent-events.js", () => ({
   emitAgentEvent: vi.fn(),
@@ -158,5 +159,31 @@ describe("handleAgentEnd", () => {
 
     expect(ctx.log.warn).not.toHaveBeenCalled();
     expect(ctx.log.debug).toHaveBeenCalledWith("embedded run agent end: runId=run-1 isError=false");
+  });
+
+  it("emits the finalized retrieval trace after tools can contribute sources", () => {
+    const onAgentEvent = vi.fn();
+    const ctx = createContext(undefined, { onAgentEvent });
+    initializeRetrievalTraceForRun("run-1", {
+      prompt: "Use Gmail and Drive to answer this current question.",
+      requestedModel: "openai/gpt-5.4-mini",
+      resolvedModel: "openai/gpt-5.4-mini",
+    });
+    markLiveSourceEscalation({ runId: "run-1", source: "gog.gmail" });
+    markLiveSourceEscalation({ runId: "run-1", source: "gog.drive" });
+
+    handleAgentEnd(ctx);
+
+    expect(onAgentEvent).toHaveBeenCalledWith({
+      stream: "lifecycle",
+      data: expect.objectContaining({
+        phase: "retrieval_trace",
+        selected_layer: "live_connected_data_sources",
+        selected_source: "gog.drive",
+        contributing_sources: ["gog.gmail", "gog.drive"],
+        multi_source_synthesis: true,
+        verification_status: "verified",
+      }),
+    });
   });
 });

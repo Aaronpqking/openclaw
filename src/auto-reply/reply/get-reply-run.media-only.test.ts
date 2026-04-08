@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { runPreparedReply } from "./get-reply-run.js";
 
+process.env.HOME ??= "/tmp";
+process.env.OPENCLAW_HOME ??= "/tmp/.openclaw-test";
+
 vi.mock("../../agents/auth-profiles/session-override.js", () => ({
   resolveSessionAuthProfileOverride: vi.fn().mockResolvedValue(undefined),
 }));
@@ -10,6 +13,10 @@ vi.mock("../../agents/pi-embedded.js", () => ({
   isEmbeddedPiRunActive: vi.fn().mockReturnValue(false),
   isEmbeddedPiRunStreaming: vi.fn().mockReturnValue(false),
   resolveEmbeddedSessionLane: vi.fn().mockReturnValue("session:session-key"),
+}));
+
+vi.mock("../../../extensions/whatsapp/src/accounts.js", () => ({
+  resolveWhatsAppAccount: vi.fn(() => ({ allowFrom: [] })),
 }));
 
 vi.mock("../../config/sessions.js", () => ({
@@ -30,6 +37,7 @@ vi.mock("../../process/command-queue.js", () => ({
 
 vi.mock("../../routing/session-key.js", () => ({
   normalizeMainKey: vi.fn().mockReturnValue("main"),
+  parseAgentSessionKey: vi.fn().mockReturnValue(undefined),
 }));
 
 vi.mock("../../utils/provider-utils.js", () => ({
@@ -279,6 +287,71 @@ describe("runPreparedReply media-only handling", () => {
 
     const call = vi.mocked(runReplyAgent).mock.calls[0]?.[0];
     expect(call?.followupRun.run.messageProvider).toBe("webchat");
+  });
+
+  it("does not require an explicit message target for normal internal webchat turns", async () => {
+    await runPreparedReply(
+      baseParams({
+        ctx: {
+          Body: "",
+          RawBody: "",
+          CommandBody: "",
+          ThreadHistoryBody: "Earlier message in this thread",
+          OriginatingChannel: "webchat",
+          OriginatingTo: "session:abc",
+          Provider: "webchat",
+          Surface: "webchat",
+          ChatType: "group",
+        },
+        sessionCtx: {
+          Body: "",
+          BodyStripped: "",
+          ThreadHistoryBody: "Earlier message in this thread",
+          MediaPath: "/tmp/input.png",
+          Provider: "webchat",
+          Surface: "webchat",
+          ChatType: "group",
+          OriginatingChannel: "webchat",
+          OriginatingTo: "session:abc",
+        },
+      }),
+    );
+
+    const call = vi.mocked(runReplyAgent).mock.calls[0]?.[0];
+    expect(call?.followupRun.run.requireExplicitMessageTarget).toBe(false);
+  });
+
+  it("requires an explicit message target for webchat turns with explicit external delivery", async () => {
+    await runPreparedReply(
+      baseParams({
+        ctx: {
+          Body: "",
+          RawBody: "",
+          CommandBody: "",
+          ThreadHistoryBody: "Earlier message in this thread",
+          OriginatingChannel: "imessage",
+          OriginatingTo: "imessage:+15550001111",
+          Provider: "webchat",
+          Surface: "webchat",
+          ExplicitDeliverRoute: true,
+          ChatType: "group",
+        },
+        sessionCtx: {
+          Body: "",
+          BodyStripped: "",
+          ThreadHistoryBody: "Earlier message in this thread",
+          MediaPath: "/tmp/input.png",
+          Provider: "webchat",
+          Surface: "webchat",
+          ChatType: "group",
+          OriginatingChannel: "imessage",
+          OriginatingTo: "imessage:+15550001111",
+        },
+      }),
+    );
+
+    const call = vi.mocked(runReplyAgent).mock.calls[0]?.[0];
+    expect(call?.followupRun.run.requireExplicitMessageTarget).toBe(true);
   });
 
   it("prefers Provider over Surface when origin channel is missing", async () => {

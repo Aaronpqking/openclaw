@@ -34,6 +34,7 @@ import {
 import { resolveAgentTimeoutMs } from "../../agents/timeout.js";
 import { deriveSessionTotalTokens, hasNonzeroUsage } from "../../agents/usage.js";
 import { ensureAgentWorkspace } from "../../agents/workspace.js";
+import { runMemoryFlushIfNeeded } from "../../auto-reply/reply/agent-runner-memory.js";
 import {
   normalizeThinkLevel,
   normalizeVerboseLevel,
@@ -525,6 +526,57 @@ export async function runCronIsolatedAgentTurn(params: {
       params.job.payload.kind === "agentTurn" && Array.isArray(params.job.payload.fallbacks)
         ? params.job.payload.fallbacks
         : undefined;
+    const isHeartbeatCronRun =
+      baseSessionKey.includes(":heartbeat") || /\bheartbeat\b/i.test(params.job.name);
+    cronSession.sessionEntry =
+      (await runMemoryFlushIfNeeded({
+        cfg: cfgWithAgentDefaults,
+        followupRun: {
+          prompt: commandBody,
+          enqueuedAt: Date.now(),
+          run: {
+            agentId,
+            agentDir,
+            sessionId: cronSession.sessionEntry.sessionId,
+            sessionKey: agentSessionKey,
+            messageProvider: messageChannel,
+            agentAccountId: resolvedDelivery.accountId,
+            sessionFile,
+            workspaceDir,
+            config: cfgWithAgentDefaults,
+            skillsSnapshot,
+            provider,
+            model,
+            authProfileId,
+            authProfileIdSource,
+            thinkLevel,
+            verboseLevel: resolvedVerboseLevel,
+            timeoutMs,
+            blockReplyBreak: "message_end",
+            senderIsOwner: true,
+            requireExplicitMessageTarget: toolPolicy.requireExplicitMessageTarget,
+          },
+        },
+        promptForEstimate: commandBody,
+        sessionCtx: {
+          Provider: messageChannel,
+          Surface: messageChannel,
+          AccountId: resolvedDelivery.accountId,
+          To: resolvedDelivery.to,
+          OriginatingChannel: messageChannel,
+          OriginatingTo: resolvedDelivery.to,
+          MessageThreadId: resolvedDelivery.threadId,
+          SessionKey: agentSessionKey,
+        },
+        defaultModel: resolvedDefault.model,
+        agentCfgContextTokens: agentCfg?.contextTokens,
+        resolvedVerboseLevel,
+        sessionEntry: cronSession.sessionEntry,
+        sessionStore: cronSession.store,
+        sessionKey: agentSessionKey,
+        storePath: cronSession.storePath,
+        isHeartbeat: isHeartbeatCronRun,
+      })) ?? cronSession.sessionEntry;
     let bootstrapPromptWarningSignaturesSeen = resolveBootstrapWarningSignaturesSeen(
       cronSession.sessionEntry.systemPromptReport,
     );

@@ -19,6 +19,7 @@ import {
 import { logVerbose } from "../../globals.js";
 import { clearCommandLane, getQueueSize } from "../../process/command-queue.js";
 import { normalizeMainKey } from "../../routing/session-key.js";
+import { INTERNAL_MESSAGE_CHANNEL, normalizeMessageChannel } from "../../utils/message-channel.js";
 import { isReasoningTagProvider } from "../../utils/provider-utils.js";
 import { hasControlCommand } from "../command-detection.js";
 import { resolveEnvelopeFormatOptions } from "../envelope.js";
@@ -472,6 +473,12 @@ export async function runPreparedReply(
     isNewSession,
   });
   const authProfileIdSource = sessionEntry?.authProfileOverrideSource;
+  const providerChannel = normalizeMessageChannel(ctx.Provider ?? sessionCtx.Provider);
+  const surfaceChannel = normalizeMessageChannel(ctx.Surface ?? sessionCtx.Surface);
+  const explicitDeliverRoute = ctx.ExplicitDeliverRoute === true;
+  const isInternalWebchatTurn =
+    (providerChannel ?? surfaceChannel) === INTERNAL_MESSAGE_CHANNEL &&
+    (surfaceChannel === INTERNAL_MESSAGE_CHANNEL || !surfaceChannel);
   const followupRun = {
     prompt: queuedBody,
     messageId: sessionCtx.MessageSidFull ?? sessionCtx.MessageSid,
@@ -534,6 +541,11 @@ export async function runPreparedReply(
       inputProvenance: ctx.InputProvenance ?? sessionCtx.InputProvenance,
       taskPacket: ctx.TaskPacket,
       extraSystemPrompt: extraSystemPromptParts.join("\n\n") || undefined,
+      // Normal conversational turns should reply back to their origin surface without
+      // forcing the model to restate an explicit target. Keep the explicit-target
+      // requirement only for webchat turns that were already promoted into an
+      // explicit external delivery route.
+      requireExplicitMessageTarget: isInternalWebchatTurn && explicitDeliverRoute,
       ...(isReasoningTagProvider(provider) ? { enforceFinalTag: true } : {}),
     },
   };

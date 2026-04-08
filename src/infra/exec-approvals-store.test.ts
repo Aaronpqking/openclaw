@@ -148,6 +148,42 @@ describe("exec approvals store helpers", () => {
     expect(readApprovalsFile(dir).socket).toEqual(ensured.socket);
   });
 
+  it("does not fail when ensure write is blocked by EACCES", () => {
+    const dir = createHomeDir();
+    const filePath = approvalsFilePath(dir);
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, JSON.stringify({ version: 1, agents: {} }, null, 2), "utf8");
+
+    const writeSpy = vi.spyOn(fs, "writeFileSync").mockImplementation(() => {
+      const err = new Error("permission denied") as NodeJS.ErrnoException;
+      err.code = "EACCES";
+      throw err;
+    });
+    const chmodSpy = vi.spyOn(fs, "chmodSync");
+
+    const ensured = ensureExecApprovals();
+
+    expect(ensured.socket?.path).toBe(resolveExecApprovalsSocketPath());
+    expect(ensured.socket?.token).toMatch(/^[A-Za-z0-9_-]{32}$/);
+    expect(writeSpy).toHaveBeenCalled();
+    expect(chmodSpy).not.toHaveBeenCalled();
+  });
+
+  it("rethrows ensure write errors that are not permission/read-only related", () => {
+    const dir = createHomeDir();
+    const filePath = approvalsFilePath(dir);
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, JSON.stringify({ version: 1, agents: {} }, null, 2), "utf8");
+
+    vi.spyOn(fs, "writeFileSync").mockImplementation(() => {
+      const err = new Error("disk full") as NodeJS.ErrnoException;
+      err.code = "ENOSPC";
+      throw err;
+    });
+
+    expect(() => ensureExecApprovals()).toThrowError(/disk full/);
+  });
+
   it("adds trimmed allowlist entries once and persists generated ids", () => {
     const dir = createHomeDir();
     vi.spyOn(Date, "now").mockReturnValue(123_456);
@@ -164,6 +200,17 @@ describe("exec approvals store helpers", () => {
       }),
     ]);
     expect(readApprovalsFile(dir).agents?.worker?.allowlist?.[0]?.id).toMatch(/^[0-9a-f-]{36}$/i);
+  });
+
+  it("does not fail when addAllowlistEntry persistence is blocked by EACCES", () => {
+    createHomeDir();
+    const approvals = ensureExecApprovals();
+    vi.spyOn(fs, "writeFileSync").mockImplementation(() => {
+      const err = new Error("permission denied") as NodeJS.ErrnoException;
+      err.code = "EACCES";
+      throw err;
+    });
+    expect(() => addAllowlistEntry(approvals, "worker", "/usr/bin/rg")).not.toThrow();
   });
 
   it("records allowlist usage on the matching entry and backfills missing ids", () => {
@@ -199,6 +246,28 @@ describe("exec approvals store helpers", () => {
       { pattern: "/usr/bin/jq", id: "keep-id" },
     ]);
     expect(readApprovalsFile(dir).agents?.main?.allowlist?.[0]?.id).toMatch(/^[0-9a-f-]{36}$/i);
+  });
+
+  it("does not fail when recordAllowlistUse persistence is blocked by EACCES", () => {
+    const dir = createHomeDir();
+    const approvals: ExecApprovalsFile = {
+      version: 1,
+      agents: {
+        main: {
+          allowlist: [{ pattern: "/usr/bin/rg" }],
+        },
+      },
+    };
+    fs.mkdirSync(path.dirname(approvalsFilePath(dir)), { recursive: true });
+    fs.writeFileSync(approvalsFilePath(dir), JSON.stringify(approvals, null, 2), "utf8");
+    vi.spyOn(fs, "writeFileSync").mockImplementation(() => {
+      const err = new Error("permission denied") as NodeJS.ErrnoException;
+      err.code = "EACCES";
+      throw err;
+    });
+    expect(() =>
+      recordAllowlistUse(approvals, undefined, { pattern: "/usr/bin/rg" }, "rg needle"),
+    ).not.toThrow();
   });
 
   it("returns null when approval socket credentials are missing", async () => {

@@ -39,10 +39,11 @@ describe("config io EACCES handling", () => {
     expect(snapshot.valid).toBe(false);
     expect(snapshot.issues).toHaveLength(1);
     expect(snapshot.issues[0].message).toContain("EACCES");
-    expect(snapshot.issues[0].message).toContain("chown");
+    expect(snapshot.issues[0].message).toContain("runtime_identity");
+    expect(snapshot.issues[0].message).toContain("config_stat");
     expect(snapshot.issues[0].message).toContain(configPath);
     // Should also emit to the logger
-    expect(errors.some((e) => e.includes("chown"))).toBe(true);
+    expect(errors.some((e) => e.includes("runtime-permissions-preflight.sh"))).toBe(true);
   });
 
   it("includes configPath in the chown hint for the correct remediation command", async () => {
@@ -55,6 +56,6 @@ describe("config io EACCES handling", () => {
 
     const snapshot = await io.readConfigFileSnapshot();
     expect(snapshot.issues[0].message).toContain(configPath);
-    expect(snapshot.issues[0].message).toContain("container");
+    expect(snapshot.issues[0].message).toContain("deploy/operator preflight");
   });
 });

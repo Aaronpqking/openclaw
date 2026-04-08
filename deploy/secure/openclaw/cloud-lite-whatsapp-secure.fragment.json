@@ -1,7 +1,7 @@
 {
   "gateway": {
     "bind": "loopback",
-    "trustedProxies": ["127.0.0.1", "::1"],
+    "trustedProxies": ["127.0.0.1", "::1", "172.18.0.0/16"],
     "controlUi": {
       "allowedOrigins": ["https://control.example.com"]
     },

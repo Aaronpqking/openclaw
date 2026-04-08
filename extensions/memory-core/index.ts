@@ -10,7 +10,10 @@ export const buildPromptSection: MemoryPromptSectionBuilder = ({
   }
   const lines = [
     "## Memory Recall",
-    "Before answering anything about prior work, decisions, dates, people, preferences, or todos: run memory_search on MEMORY.md + memory/*.md; then use memory_get to pull only the needed lines. If low confidence after search, say you checked.",
+    "Use deterministic retrieval precedence: active conversation -> recent session cache -> current daily memory -> rolling recent daily memory -> deeper durable notes -> live connected sources.",
+    "Before answering anything about prior work, decisions, dates, people, preferences, or todos: run memory_search on MEMORY.md + memory/*.md; then use memory_get to pull only the needed lines.",
+    "Recent conversation outranks long-term notes. Same-day memory outranks deeper notes.",
+    "For source-specific or time-sensitive requests (for example inbox, calendar, docs, or messages), escalate to a live source when memory confidence is low instead of guessing.",
   ];
   if (citationsMode === "off") {
     lines.push(

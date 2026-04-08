@@ -273,6 +273,17 @@ describe("gateway sessions patch", () => {
     expect(entry.modelOverride).toBe("claude-sonnet-4-6");
   });
 
+  test("rejects unknown model refs when allowlist is open and catalog does not include them", async () => {
+    const result = await runPatch({
+      cfg: {} as OpenClawConfig,
+      patch: { key: MAIN_SESSION_KEY, model: "openai/not-a-real-model" },
+      loadGatewayModelCatalog: async () => [
+        { provider: "openai", id: "gpt-5.4-mini", name: "GPT-5.4 Mini" },
+      ],
+    });
+    expectPatchError(result, "model not configured: openai/not-a-real-model");
+  });
+
   test("sets spawnDepth for subagent sessions", async () => {
     const entry = expectPatchOk(
       await runPatch({

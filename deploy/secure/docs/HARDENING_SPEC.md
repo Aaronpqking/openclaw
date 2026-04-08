@@ -158,7 +158,7 @@ That is a residual risk and should be addressed operationally:
 1. Ensure `~/.openclaw` and `~/.openclaw/workspace` exist on the host.
 2. Merge `deploy/secure/openclaw/gateway.mvp.fragment.json` into your OpenClaw config.
 3. Merge `deploy/secure/openclaw/tools-skills.zero-trust.fragment.json` into your OpenClaw config.
-4. Set `OPENCLAW_GATEWAY_TOKEN` or `OPENCLAW_GATEWAY_PASSWORD`.
+4. Set `OPENCLAW_GATEWAY_TOKEN` or `OPENCLAW_GATEWAY_PASSWORD`. Optionally add model provider keys to `~/.openclaw/secure-mvp.env` alongside them (for example `OPENAI_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `DEEPSEEK_API_KEY`; see `deploy/secure/docs/REMOTE_DEPLOY.md` for the remote deploy flow).
 5. Start:
 
 ```bash

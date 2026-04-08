@@ -84,6 +84,8 @@ export type FollowupRun = {
     taskPacket?: TaskPacket;
     extraSystemPrompt?: string;
     enforceFinalTag?: boolean;
+    /** Require explicit targets for message tool sends (prevents implicit carry-over routing). */
+    requireExplicitMessageTarget?: boolean;
   };
 };
 

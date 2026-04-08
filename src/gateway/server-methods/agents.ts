@@ -7,11 +7,15 @@ import {
 } from "../../agents/agent-scope.js";
 import {
   DEFAULT_AGENTS_FILENAME,
+  DEFAULT_APPROVALS_FILENAME,
   DEFAULT_BOOTSTRAP_FILENAME,
+  DEFAULT_CHANNELS_FILENAME,
   DEFAULT_HEARTBEAT_FILENAME,
   DEFAULT_IDENTITY_FILENAME,
   DEFAULT_MEMORY_ALT_FILENAME,
   DEFAULT_MEMORY_FILENAME,
+  DEFAULT_OPERATIONS_FILENAME,
+  DEFAULT_PROJECTS_FILENAME,
   DEFAULT_SOUL_FILENAME,
   DEFAULT_TOOLS_FILENAME,
   DEFAULT_USER_FILENAME,
@@ -29,6 +33,7 @@ import { loadConfig, writeConfigFile } from "../../config/config.js";
 import { resolveSessionTranscriptsDirForAgent } from "../../config/sessions/paths.js";
 import { sameFileIdentity } from "../../infra/file-identity.js";
 import { SafeOpenError, readLocalFileSafely, writeFileWithinRoot } from "../../infra/fs-safe.js";
+import { isGovernanceRelativePath } from "../../infra/governance-files.js";
 import { assertNoPathAliasEscape } from "../../infra/path-alias-guards.js";
 import { isNotFoundPathError } from "../../infra/path-guards.js";
 import { DEFAULT_AGENT_ID, normalizeAgentId } from "../../routing/session-key.js";
@@ -48,7 +53,7 @@ import {
 import { listAgentsForGateway } from "../session-utils.js";
 import type { GatewayRequestHandlers, RespondFn } from "./types.js";
 
-const BOOTSTRAP_FILE_NAMES = [
+const CORE_BOOTSTRAP_FILE_NAMES = [
   DEFAULT_AGENTS_FILENAME,
   DEFAULT_SOUL_FILENAME,
   DEFAULT_TOOLS_FILENAME,
@@ -57,13 +62,24 @@ const BOOTSTRAP_FILE_NAMES = [
   DEFAULT_HEARTBEAT_FILENAME,
   DEFAULT_BOOTSTRAP_FILENAME,
 ] as const;
-const BOOTSTRAP_FILE_NAMES_POST_ONBOARDING = BOOTSTRAP_FILE_NAMES.filter(
+
+const OPTIONAL_GOVERNANCE_FILE_NAMES = [
+  DEFAULT_OPERATIONS_FILENAME,
+  DEFAULT_APPROVALS_FILENAME,
+  DEFAULT_CHANNELS_FILENAME,
+  DEFAULT_PROJECTS_FILENAME,
+] as const;
+const BOOTSTRAP_FILE_NAMES_POST_ONBOARDING = CORE_BOOTSTRAP_FILE_NAMES.filter(
   (name) => name !== DEFAULT_BOOTSTRAP_FILENAME,
 );
 
 const MEMORY_FILE_NAMES = [DEFAULT_MEMORY_FILENAME, DEFAULT_MEMORY_ALT_FILENAME] as const;
 
-const ALLOWED_FILE_NAMES = new Set<string>([...BOOTSTRAP_FILE_NAMES, ...MEMORY_FILE_NAMES]);
+const ALLOWED_FILE_NAMES = new Set<string>([
+  ...CORE_BOOTSTRAP_FILE_NAMES,
+  ...OPTIONAL_GOVERNANCE_FILE_NAMES,
+  ...MEMORY_FILE_NAMES,
+]);
 
 function resolveAgentWorkspaceFileOrRespondError(
   params: Record<string, unknown>,
@@ -94,6 +110,17 @@ function resolveAgentWorkspaceFileOrRespondError(
   }
   const workspaceDir = resolveAgentWorkspaceDir(cfg, agentId);
   return { cfg, agentId, workspaceDir, name };
+}
+
+function respondGovernanceFileProtected(respond: RespondFn, name: string) {
+  respond(
+    false,
+    undefined,
+    errorShape(
+      ErrorCodes.INVALID_REQUEST,
+      `governance file "${name}" is amendment-only and cannot be changed through this runtime surface`,
+    ),
+  );
 }
 
 type FileMeta = {
@@ -278,7 +305,7 @@ async function listAgentFiles(workspaceDir: string, options?: { hideBootstrap?: 
 
   const bootstrapFileNames = options?.hideBootstrap
     ? BOOTSTRAP_FILE_NAMES_POST_ONBOARDING
-    : BOOTSTRAP_FILE_NAMES;
+    : CORE_BOOTSTRAP_FILE_NAMES;
   for (const name of bootstrapFileNames) {
     const resolved = await resolveAgentWorkspaceFilePath({
       workspaceDir,
@@ -303,6 +330,28 @@ async function listAgentFiles(workspaceDir: string, options?: { hideBootstrap?: 
     } else {
       files.push({ name, path: filePath, missing: true });
     }
+  }
+
+  for (const name of OPTIONAL_GOVERNANCE_FILE_NAMES) {
+    const resolved = await resolveAgentWorkspaceFilePath({
+      workspaceDir,
+      name,
+      allowMissing: true,
+    });
+    if (resolved.kind !== "ready") {
+      continue;
+    }
+    const meta = await statFileSafely(resolved.ioPath);
+    if (!meta) {
+      continue;
+    }
+    files.push({
+      name,
+      path: resolved.requestPath,
+      missing: false,
+      size: meta.size,
+      updatedAtMs: meta.updatedAtMs,
+    });
   }
 
   const primaryResolved = await resolveAgentWorkspaceFilePath({
@@ -741,6 +790,10 @@ export const agentsHandlers: GatewayRequestHandlers = {
       respondWorkspaceFileUnsafe(respond, name);
       return;
     }
+    if (isGovernanceRelativePath(relativeWritePath)) {
+      respondGovernanceFileProtected(respond, name);
+      return;
+    }
     try {
       await writeFileWithinRoot({
         rootDir: resolvedPath.workspaceReal,
@@ -748,7 +801,11 @@ export const agentsHandlers: GatewayRequestHandlers = {
         data: content,
         encoding: "utf8",
       });
-    } catch {
+    } catch (err) {
+      if (err instanceof SafeOpenError && err.code === "governance-protected") {
+        respondGovernanceFileProtected(respond, name);
+        return;
+      }
       respondWorkspaceFileUnsafe(respond, name);
       return;
     }

@@ -60,6 +60,80 @@ import type { TypingController } from "./typing.js";
 
 const BLOCK_REPLY_SEND_TIMEOUT_MS = 15_000;
 
+export function buildModelSelectionEventData(params: {
+  requestedProvider: string;
+  requestedModel: string;
+  resolvedProvider: string;
+  resolvedModel: string;
+  fallbackTransition: ReturnType<typeof resolveFallbackTransition>;
+  attempts: Array<{
+    provider: string;
+    model: string;
+    error: string;
+    reason?: string;
+    status?: number;
+    code?: string;
+  }>;
+}) {
+  const formatModelRef = (provider: string, model: string): string => {
+    const normalizedProvider = provider.trim();
+    const normalizedModel = model.trim();
+    if (!normalizedProvider && !normalizedModel) {
+      return "unknown";
+    }
+    if (!normalizedProvider) {
+      return normalizedModel;
+    }
+    if (!normalizedModel) {
+      return normalizedProvider;
+    }
+    const providerPrefix = `${normalizedProvider.toLowerCase()}/`;
+    if (normalizedModel.toLowerCase().startsWith(providerPrefix)) {
+      return normalizedModel;
+    }
+    return `${normalizedProvider}/${normalizedModel}`;
+  };
+  const requestedModelRef = formatModelRef(params.requestedProvider, params.requestedModel);
+  const resolvedModelRef = formatModelRef(params.resolvedProvider, params.resolvedModel);
+  const fallbackChain = params.attempts.map((attempt) =>
+    formatModelRef(attempt.provider, attempt.model),
+  );
+  const providerHealthStatus =
+    params.fallbackTransition.fallbackTransitioned || params.attempts.length > 0
+      ? "degraded"
+      : "healthy";
+  return {
+    phase: "model_selection",
+    requestedProvider: params.requestedProvider,
+    requestedModel: params.requestedModel,
+    resolvedProvider: params.resolvedProvider,
+    resolvedModel: params.resolvedModel,
+    requested_model: requestedModelRef,
+    resolved_model: resolvedModelRef,
+    model_source: params.fallbackTransition.fallbackTransitioned
+      ? "fallback"
+      : "requested_or_default",
+    fallback_chain: fallbackChain,
+    fallback_reason: params.fallbackTransition.reasonSummary || null,
+    model_access_reason: params.fallbackTransition.fallbackTransitioned
+      ? "requested_unavailable_fallback_applied"
+      : "requested_available_or_default",
+    surface_policy_reason: "none",
+    task_class: "operational_routing_tool_use_triage",
+    provider_health_status: providerHealthStatus,
+    finalProvider: params.resolvedProvider,
+    finalModel: params.resolvedModel,
+    fallbackApplied: params.fallbackTransition.fallbackTransitioned,
+    fallbackCleared: params.fallbackTransition.fallbackCleared,
+    reasonSummary: params.fallbackTransition.reasonSummary,
+    attemptSummaries: params.fallbackTransition.attemptSummaries,
+    reasonCodes: params.attempts
+      .map((attempt) => attempt.reason ?? attempt.code ?? attempt.status?.toString())
+      .filter((value): value is string => Boolean(value)),
+    attempts: params.attempts,
+  } satisfies Record<string, unknown>;
+}
+
 export async function runReplyAgent(params: {
   commandBody: string;
   followupRun: FollowupRun;
@@ -445,6 +519,19 @@ export async function runReplyAgent(params: {
       activeModel: modelUsed,
       attempts: fallbackAttempts,
       state: fallbackStateEntry,
+    });
+    emitAgentEvent({
+      runId,
+      sessionKey,
+      stream: "lifecycle",
+      data: buildModelSelectionEventData({
+        requestedProvider: selectedProvider,
+        requestedModel: selectedModel,
+        resolvedProvider: providerUsed,
+        resolvedModel: modelUsed,
+        fallbackTransition,
+        attempts: fallbackAttempts,
+      }),
     });
     if (fallbackTransition.stateChanged) {
       if (fallbackStateEntry) {

@@ -818,6 +818,34 @@ describe("agentCommand", () => {
     }
   });
 
+  it("rejects explicit model overrides that are not in runtime catalog when allowlist is open", async () => {
+    await withTempHome(async (home) => {
+      const store = path.join(home, "sessions.json");
+      mockConfig(home, store, {
+        model: { primary: "openai/gpt-5.4-mini" },
+        models: {},
+      });
+      vi.mocked(loadModelCatalog).mockResolvedValueOnce([
+        { id: "gpt-5.4-mini", name: "GPT-5.4 Mini", provider: "openai" },
+      ]);
+
+      await expect(
+        agentCommand(
+          {
+            message: "try unknown model",
+            sessionKey: "agent:main:subagent:unknown-catalog-model",
+            provider: "openai",
+            model: "not-a-real-model",
+          },
+          runtime,
+        ),
+      ).rejects.toThrow(
+        'Model override "openai/not-a-real-model" is not configured for this runtime.',
+      );
+      expect(vi.mocked(runEmbeddedPiAgent)).not.toHaveBeenCalled();
+    });
+  });
+
   it("keeps stored auth profile overrides during one-off cross-provider runs", async () => {
     await withTempHome(async (home) => {
       const store = path.join(home, "sessions.json");

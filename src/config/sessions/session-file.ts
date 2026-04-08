@@ -1,3 +1,4 @@
+import path from "node:path";
 import { resolveSessionFilePath } from "./paths.js";
 import { updateSessionStore } from "./store.js";
 import type { SessionEntry } from "./types.js";
@@ -23,7 +24,7 @@ export async function resolveAndPersistSessionFile(params: {
       : baseEntry;
   const sessionFile = resolveSessionFilePath(sessionId, entryForResolve, {
     agentId: params.agentId,
-    sessionsDir: params.sessionsDir,
+    sessionsDir: params.sessionsDir ?? path.dirname(storePath),
   });
   const persistedEntry: SessionEntry = {
     ...baseEntry,

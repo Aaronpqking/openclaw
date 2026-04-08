@@ -53,6 +53,9 @@ export function createProfileAvailability({
   setProfileRunning,
 }: AvailabilityDeps): AvailabilityOps {
   const capabilities = getBrowserProfileCapabilities(profile);
+  const resolveCdpSsrFPolicy = () =>
+    // Managed loopback CDP is an internal control channel, not user navigation.
+    profile.cdpIsLoopback ? undefined : state().resolved.ssrfPolicy;
   const resolveTimeouts = (timeoutMs: number | undefined) =>
     resolveCdpReachabilityTimeouts({
       profileIsLoopback: profile.cdpIsLoopback,
@@ -72,7 +75,7 @@ export function createProfileAvailability({
       profile.cdpUrl,
       httpTimeoutMs,
       wsTimeoutMs,
-      state().resolved.ssrfPolicy,
+      resolveCdpSsrFPolicy(),
     );
   };
 
@@ -81,7 +84,7 @@ export function createProfileAvailability({
       return await isReachable(timeoutMs);
     }
     const { httpTimeoutMs } = resolveTimeouts(timeoutMs);
-    return await isChromeReachable(profile.cdpUrl, httpTimeoutMs, state().resolved.ssrfPolicy);
+    return await isChromeReachable(profile.cdpUrl, httpTimeoutMs, resolveCdpSsrFPolicy());
   };
 
   const attachRunning = (running: NonNullable<ProfileRuntimeState["running"]>) => {

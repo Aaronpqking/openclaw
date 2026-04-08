@@ -118,6 +118,9 @@ function createProfileContext(
 
 export function createBrowserRouteContext(opts: ContextOptions): BrowserRouteContext {
   const refreshConfigFromDisk = opts.refreshConfigFromDisk === true;
+  const resolveProfileCdpSsrFPolicy = (profile: ResolvedBrowserProfile) =>
+    // Managed loopback CDP is internal; SSRF policy still applies to remote endpoints.
+    profile.cdpIsLoopback ? undefined : state().resolved.ssrfPolicy;
 
   const state = () => {
     const current = opts.getState();
@@ -190,7 +193,7 @@ export function createBrowserRouteContext(opts: ContextOptions): BrowserRouteCon
           const reachable = await isChromeReachable(
             profile.cdpUrl,
             200,
-            current.resolved.ssrfPolicy,
+            resolveProfileCdpSsrFPolicy(profile),
           );
           if (reachable) {
             running = true;

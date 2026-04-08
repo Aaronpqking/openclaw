@@ -3,11 +3,16 @@ import { resolveSendableOutboundReplyParts } from "openclaw/plugin-sdk/reply-pay
 import { parseReplyDirectives } from "../auto-reply/reply/reply-directives.js";
 import { SILENT_REPLY_TOKEN } from "../auto-reply/tokens.js";
 import { emitAgentEvent } from "../infra/agent-events.js";
+import { createSubsystemLogger } from "../logging/subsystem.js";
 import { createInlineCodeState } from "../markdown/code-spans.js";
 import {
   isMessagingToolDuplicateNormalized,
   normalizeTextForComparison,
 } from "./pi-embedded-helpers.js";
+import {
+  peekRouteAuditSummaryForRun,
+  type RouteAuditSummary,
+} from "./pi-embedded-subscribe.handlers.tools.js";
 import type { EmbeddedPiSubscribeContext } from "./pi-embedded-subscribe.handlers.types.js";
 import { appendRawStream } from "./pi-embedded-subscribe.raw-stream.js";
 import {
@@ -18,6 +23,9 @@ import {
   formatReasoningMessage,
   promoteThinkingTagsToBlocks,
 } from "./pi-embedded-utils.js";
+import { peekRetrievalTraceForRun, type RetrievalTraceSnapshot } from "./retrieval-trace.js";
+
+const answerPolicyLog = createSubsystemLogger("agents/answer-policy");
 
 const stripTrailingDirective = (text: string): string => {
   const openIndex = text.lastIndexOf("[[");
@@ -40,6 +48,77 @@ function emitReasoningEnd(ctx: EmbeddedPiSubscribeContext) {
   }
   ctx.state.reasoningStreamOpen = false;
   void ctx.params.onReasoningEnd?.();
+}
+
+function hasCompletionClaim(text: string): boolean {
+  const normalized = text.trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  return (
+    /\b(i|we)\s+(fixed|repaired|restored|completed|finished|deployed|updated|changed|switched|set)\b/i.test(
+      normalized,
+    ) ||
+    /\b(done|completed|resolved|shipped|rolled out)\b/i.test(normalized) ||
+    normalized.includes("✅")
+  );
+}
+
+export function applyVerifiedAnswerPolicy(params: {
+  text: string;
+  retrievalTrace?: RetrievalTraceSnapshot | null;
+  routeAuditSummary?: RouteAuditSummary | null;
+}): {
+  text: string;
+  policy_enforced: boolean;
+  answer_truthfulness_mode: "verified" | "guarded_unverified" | "guarded_unverified_action";
+  freshness_required: boolean;
+  verification_status: "verified" | "unverified" | "source_unavailable";
+  task_completed_verified: boolean;
+  reason: "none" | "freshness_unverified" | "completion_unverified";
+} {
+  const baseText = params.text.trim();
+  const freshnessRequired = params.retrievalTrace?.freshness_required === true;
+  const verificationStatus = params.retrievalTrace?.verification_status ?? "unverified";
+  const taskCompletedVerified = params.routeAuditSummary?.task_completed_verified === true;
+
+  if (freshnessRequired && verificationStatus !== "verified") {
+    const unavailableSuffix =
+      verificationStatus === "source_unavailable"
+        ? " Live source verification was unavailable in this run."
+        : "";
+    return {
+      text: `I couldn't verify this against a live source in this run, so I can't provide a confirmed current-state answer.${unavailableSuffix}`,
+      policy_enforced: true,
+      answer_truthfulness_mode: "guarded_unverified",
+      freshness_required: freshnessRequired,
+      verification_status: verificationStatus,
+      task_completed_verified: taskCompletedVerified,
+      reason: "freshness_unverified",
+    };
+  }
+
+  if (baseText && hasCompletionClaim(baseText) && !taskCompletedVerified) {
+    return {
+      text: "I can't claim completion for that action because this run did not produce a verified completion signal (task_completed_verified=false).",
+      policy_enforced: true,
+      answer_truthfulness_mode: "guarded_unverified_action",
+      freshness_required: freshnessRequired,
+      verification_status: verificationStatus,
+      task_completed_verified: taskCompletedVerified,
+      reason: "completion_unverified",
+    };
+  }
+
+  return {
+    text: params.text,
+    policy_enforced: false,
+    answer_truthfulness_mode: verificationStatus === "verified" ? "verified" : "guarded_unverified",
+    freshness_required: freshnessRequired,
+    verification_status: verificationStatus,
+    task_completed_verified: taskCompletedVerified,
+    reason: "none",
+  };
 }
 
 export function resolveSilentReplyFallbackText(params: {
@@ -296,7 +375,7 @@ export function handleMessageEnd(
     rawThinking: extractAssistantThinking(assistantMessage),
   });
 
-  const text = resolveSilentReplyFallbackText({
+  let text = resolveSilentReplyFallbackText({
     text: ctx.stripBlockTags(rawText, { thinking: false, final: false }),
     messagingToolSentTexts: ctx.state.messagingToolSentTexts,
   });
@@ -309,6 +388,43 @@ export function handleMessageEnd(
   const parsedText = trimmedText ? parseReplyDirectives(stripTrailingDirective(trimmedText)) : null;
   let cleanedText = parsedText?.text ?? "";
   let { mediaUrls, hasMedia } = resolveSendableOutboundReplyParts(parsedText ?? {});
+  const retrievalTrace = peekRetrievalTraceForRun(ctx.params.runId);
+  const routeAuditSummary = peekRouteAuditSummaryForRun(ctx.params.runId);
+  const policy = applyVerifiedAnswerPolicy({
+    text: cleanedText || text,
+    retrievalTrace,
+    routeAuditSummary,
+  });
+  if (policy.policy_enforced) {
+    const policyText = policy.text.trim();
+    text = policyText;
+    cleanedText = policyText;
+    mediaUrls = [];
+    hasMedia = false;
+  }
+  const answerPolicyData = {
+    phase: "answer_policy",
+    freshness_required: policy.freshness_required,
+    verification_status: policy.verification_status,
+    task_completed_verified: policy.task_completed_verified,
+    answer_truthfulness_mode: policy.answer_truthfulness_mode,
+    policy_enforced: policy.policy_enforced,
+    reason: policy.reason,
+    requested_model: retrievalTrace?.requested_model ?? "unknown",
+    resolved_model: retrievalTrace?.resolved_model ?? "unknown",
+  };
+  emitAgentEvent({
+    runId: ctx.params.runId,
+    stream: "lifecycle",
+    data: answerPolicyData,
+  });
+  void ctx.params.onAgentEvent?.({
+    stream: "lifecycle",
+    data: answerPolicyData,
+  });
+  answerPolicyLog.info(
+    `answer_policy ${JSON.stringify({ run_id: ctx.params.runId, ...answerPolicyData })}`,
+  );
 
   if (!cleanedText && !hasMedia && !ctx.params.enforceFinalTag) {
     const rawTrimmed = rawText.trim();

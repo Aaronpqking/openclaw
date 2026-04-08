@@ -444,7 +444,76 @@ export async function runMemoryFlushIfNeeded(params: {
       entry != null &&
       !hasAlreadyFlushedForCurrentCompaction(entry));
 
+  const auditSessionId = params.followupRun.run.sessionId ?? entry?.sessionId ?? "unknown";
+  const auditRunType = params.followupRun.run.provider ?? "unknown";
+  const compactionCountBefore = entry?.compactionCount ?? 0;
+  let compactionCountAfter = compactionCountBefore;
+  let auditTranscriptHash = entry?.memoryFlushContextHash ?? "na";
+  let persistenceWriteAttempted = false;
+  let persistenceWriteSuccess = false;
+  const emitDecisionAudit = (fields: {
+    flushEligible: boolean;
+    reasonCode: string;
+    transcriptHash?: string;
+    compactionAfter?: number;
+    persistenceWriteAttempted?: boolean;
+    persistenceWriteSuccess?: boolean;
+  }) => {
+    console.log(
+      `[memory_flush_decision] sessionId=${auditSessionId} runType=${auditRunType} ` +
+        `flushEligible=${fields.flushEligible ? "yes" : "no"} reasonCode=${fields.reasonCode} ` +
+        `transcriptHash=${fields.transcriptHash ?? "na"} ` +
+        `compactionBefore=${compactionCountBefore} ` +
+        `compactionAfter=${fields.compactionAfter ?? compactionCountAfter} ` +
+        `persistenceWriteAttempted=${fields.persistenceWriteAttempted ? "yes" : "no"} ` +
+        `persistenceWriteSuccess=${fields.persistenceWriteSuccess ? "yes" : "no"}`,
+    );
+  };
+
+  const flushEligibleByToken = Boolean(
+    memoryFlushSettings &&
+    memoryFlushWritable &&
+    !params.isHeartbeat &&
+    !isCli &&
+    shouldRunMemoryFlush({
+      entry,
+      tokenCount: tokenCountForFlush,
+      contextWindowTokens,
+      reserveTokensFloor: memoryFlushSettings.reserveTokensFloor,
+      softThresholdTokens: memoryFlushSettings.softThresholdTokens,
+    }),
+  );
+  const flushEligibleByTranscriptSize = Boolean(
+    shouldForceFlushByTranscriptSize &&
+    entry != null &&
+    !hasAlreadyFlushedForCurrentCompaction(entry),
+  );
+
   if (!shouldFlushMemory) {
+    let ineligibleReasonCode = "memory_flush_not_triggered";
+    if (!memoryFlushSettings) {
+      ineligibleReasonCode = "memory_flush_disabled";
+    } else if (!memoryFlushWritable) {
+      ineligibleReasonCode = "memory_flush_not_writable";
+    } else if (params.isHeartbeat) {
+      ineligibleReasonCode = "is_heartbeat";
+    } else if (isCli) {
+      ineligibleReasonCode = "is_cli";
+    } else if (shouldCheckTranscriptSizeForForcedFlush && !shouldForceFlushByTranscriptSize) {
+      ineligibleReasonCode = "force_flush_size_not_met";
+    } else if (!flushEligibleByToken && !flushEligibleByTranscriptSize) {
+      ineligibleReasonCode = "token_and_transcript_gates_not_met";
+    } else if (entry && hasAlreadyFlushedForCurrentCompaction(entry)) {
+      ineligibleReasonCode = "already_flushed_for_current_compaction";
+    }
+    emitDecisionAudit({
+      flushEligible: false,
+      reasonCode: ineligibleReasonCode,
+      transcriptHash: auditTranscriptHash,
+      compactionAfter: compactionCountAfter,
+      persistenceWriteAttempted,
+      persistenceWriteSuccess,
+    });
     return entry ?? params.sessionEntry;
   }
 
@@ -479,6 +548,14 @@ export async function runMemoryFlushIfNeeded(params: {
         tailMessages.length > 0 ? computeContextHash(tailMessages) : undefined;
       const previousHash = entry?.memoryFlushContextHash;
       if (previousHash && contextHashBeforeFlush === previousHash) {
+        emitDecisionAudit({
+          flushEligible: false,
+          reasonCode: "context_hash_unchanged",
+          transcriptHash: contextHashBeforeFlush,
+          compactionAfter: compactionCountAfter,
+          persistenceWriteAttempted,
+          persistenceWriteSuccess,
+        });
         logVerbose(
           `memoryFlush skipped (context hash unchanged): sessionKey=${params.sessionKey} hash=${contextHashBeforeFlush}`,
         );
@@ -589,7 +666,9 @@ export async function runMemoryFlushIfNeeded(params: {
         memoryFlushCompactionCount = nextCount;
       }
     }
+    compactionCountAfter = memoryFlushCompactionCount;
     if (params.storePath && params.sessionKey) {
+      persistenceWriteAttempted = true;
       try {
         // Re-hash the transcript AFTER the flush so the stored hash matches
         // what the next pre-flush check will compute (the transcript now
@@ -617,13 +696,32 @@ export async function runMemoryFlushIfNeeded(params: {
           }),
         });
         if (updatedEntry) {
+          persistenceWriteSuccess = true;
           activeSessionEntry = updatedEntry;
+          auditTranscriptHash =
+            updatedEntry.memoryFlushContextHash ?? contextHashAfterFlush ?? "na";
         }
       } catch (err) {
         logVerbose(`failed to persist memory flush metadata: ${String(err)}`);
       }
     }
+    emitDecisionAudit({
+      flushEligible: true,
+      reasonCode: "memory_flush_triggered",
+      transcriptHash: auditTranscriptHash,
+      compactionAfter: compactionCountAfter,
+      persistenceWriteAttempted,
+      persistenceWriteSuccess,
+    });
   } catch (err) {
+    emitDecisionAudit({
+      flushEligible: true,
+      reasonCode: "memory_flush_run_failed",
+      transcriptHash: contextHashBeforeFlush ?? auditTranscriptHash,
+      compactionAfter: compactionCountAfter,
+      persistenceWriteAttempted,
+      persistenceWriteSuccess,
+    });
     logVerbose(`memory flush run failed: ${String(err)}`);
   }
 

@@ -287,6 +287,21 @@ describe("commands registry", () => {
   it("normalizes dock command aliases", () => {
     expect(normalizeCommandBody("/dock_telegram")).toBe("/dock-telegram");
   });
+
+  it("normalizes timestamp-prefixed model commands", () => {
+    expect(normalizeCommandBody("[Sun 2026-04-05 16:58 UTC] /model openai/gpt-5.4")).toBe(
+      "/model openai/gpt-5.4",
+    );
+    expect(
+      normalizeCommandBody("System: [2026-04-05 17:37:33 UTC] /model openai/gpt-5.4-mini"),
+    ).toBe("/model openai/gpt-5.4-mini");
+  });
+
+  it("does not coerce bracket-prefixed non-command paths into commands", () => {
+    expect(normalizeCommandBody("[Sun 2026-04-05 16:58 UTC] /var/log/openclaw.log")).toBe(
+      "[Sun 2026-04-05 16:58 UTC] /var/log/openclaw.log",
+    );
+  });
 });
 
 describe("commands registry args", () => {

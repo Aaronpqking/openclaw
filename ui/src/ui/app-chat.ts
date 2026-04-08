@@ -150,6 +150,14 @@ async function sendChatMessageNow(
   }
   if (ok && opts?.refreshSessions && runId) {
     host.refreshSessionsAfterChat.add(runId);
+    // Gateway applies /reset and /new before the greeting run; reload session rows
+    // now so the context meter drops without waiting for a successful chat "final".
+    void loadSessions(host as unknown as OpenClawApp, {
+      activeMinutes: 0,
+      limit: 0,
+      includeGlobal: true,
+      includeUnknown: true,
+    });
   }
   return ok;
 }

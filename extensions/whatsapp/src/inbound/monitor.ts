@@ -9,7 +9,7 @@ import { getChildLogger } from "openclaw/plugin-sdk/text-runtime";
 import { jidToE164, resolveJidToE164 } from "openclaw/plugin-sdk/text-runtime";
 import { createWaSocket, getStatusCode, waitForWaConnection } from "../session.js";
 import { checkInboundAccessControl } from "./access-control.js";
-import { isRecentInboundMessage } from "./dedupe.js";
+import { evaluateInboundDedupe } from "./dedupe.js";
 import {
   describeReplyContext,
   extractLocationData,
@@ -176,12 +176,6 @@ export async function monitorWebInbox(options: {
     }
 
     const group = isJidGroup(remoteJid) === true;
-    if (id) {
-      const dedupeKey = `${options.accountId}:${remoteJid}:${id}`;
-      if (isRecentInboundMessage(dedupeKey)) {
-        return null;
-      }
-    }
     const participantJid = msg.key?.participant ?? undefined;
     const from = group ? remoteJid : await resolveInboundJid(remoteJid);
     if (!from) {
@@ -423,6 +417,34 @@ export async function monitorWebInbox(options: {
 
       const enriched = await enrichInboundMessage(msg);
       if (!enriched) {
+        continue;
+      }
+
+      const normalizedPeer = inbound.group
+        ? inbound.from + ":" + (inbound.senderE164 || inbound.participantJid || "unknown")
+        : inbound.from;
+      const dedupe = evaluateInboundDedupe({
+        accountId: options.accountId,
+        normalizedPeer,
+        providerMessageId: inbound.id,
+        body: enriched.body,
+        timestampMs: inbound.messageTimestampMs,
+      });
+      if (!dedupe.accepted) {
+        inboundLogger.info(
+          {
+            accountId: options.accountId,
+            reason: dedupe.reason,
+            providerMessageId: inbound.id || null,
+            normalizedPeer,
+            dedupeKey: dedupe.dedupeKey || null,
+            replayKey: dedupe.replayKey || null,
+            replayHash: dedupe.replayHash || null,
+            replayBucket: dedupe.replayBucket || null,
+            upsertType: upsert.type || null,
+          },
+          "suppressed inbound replay/duplicate",
+        );
         continue;
       }
 

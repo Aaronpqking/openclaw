@@ -4,12 +4,15 @@ import { appendBootstrapPromptWarning } from "../../bootstrap-budget.js";
 import { resolveOllamaBaseUrlForRun } from "../../ollama-stream.js";
 import { buildAgentSystemPrompt } from "../../system-prompt.js";
 import {
+  applyRouteIntentToolScoping,
+  buildRouteIntentSystemPromptAddition,
   buildAfterTurnRuntimeContext,
   composeSystemPromptWithHookContext,
   isOllamaCompatProvider,
   prependSystemPromptAddition,
   resolveAttemptFsWorkspaceOnly,
   resolveOllamaCompatNumCtxEnabled,
+  resolveRouteIntentFromPrompt,
   resolvePromptBuildHookResult,
   resolvePromptModeForSession,
   shouldInjectOllamaCompatNumCtx,
@@ -217,6 +220,57 @@ describe("resolvePromptModeForSession", () => {
     expect(resolvePromptModeForSession(undefined)).toBe("full");
     expect(resolvePromptModeForSession("agent:main")).toBe("full");
     expect(resolvePromptModeForSession("agent:main:thread:abc")).toBe("full");
+  });
+});
+
+describe("Google Workspace route-intent prompt additions", () => {
+  it("detects google-workspace route intent from prompt text", () => {
+    expect(resolveRouteIntentFromPrompt("check gmail inbox and summarize unread")).toMatchObject({
+      googleWorkspace: true,
+      browserExplicitlyRequested: false,
+    });
+  });
+
+  it("builds explicit gog-first policy guidance for google-workspace prompts", () => {
+    const addition = buildRouteIntentSystemPromptAddition({
+      routeIntent: { googleWorkspace: true, browserExplicitlyRequested: false },
+    });
+    expect(addition).toContain("First route must be gog-backed exec");
+    expect(addition).toContain("Do not call read/memory/browser tools");
+    expect(addition).toContain("Never run non-gog shell probes");
+    expect(addition).toContain("Use browser only when explicitly requested");
+    expect(addition).toContain("Never use --no-input for gog auth repair");
+    expect(addition).toContain("prefer `gog auth keyring file`");
+    expect(addition).toContain("gog auth add ... --remote --step 1/2 --force-consent");
+    expect(addition).toContain("same host/environment as the gateway");
+    expect(addition).toContain("manual auth state mismatch");
+    expect(addition).toContain("gog auth list --check");
+    expect(addition).toContain("gog --version");
+    expect(addition).toContain("task_completed_verified=true");
+  });
+
+  it("skips policy additions for non-google route intent", () => {
+    expect(
+      buildRouteIntentSystemPromptAddition({
+        routeIntent: { googleWorkspace: false },
+      }),
+    ).toBeUndefined();
+  });
+
+  it("scopes available tools to exec for google-workspace route intent", () => {
+    const scoped = applyRouteIntentToolScoping({
+      routeIntent: { googleWorkspace: true },
+      tools: [{ name: "read" }, { name: "exec" }, { name: "message" }],
+    });
+    expect(scoped).toEqual([{ name: "exec" }]);
+  });
+
+  it("keeps original tools when google-workspace scoping has no exec tool", () => {
+    const scoped = applyRouteIntentToolScoping({
+      routeIntent: { googleWorkspace: true },
+      tools: [{ name: "read" }, { name: "message" }],
+    });
+    expect(scoped).toEqual([{ name: "read" }, { name: "message" }]);
   });
 });
 

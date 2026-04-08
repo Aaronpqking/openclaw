@@ -96,7 +96,7 @@ Examples:
 - `["wacli"]` if you intentionally want the WhatsApp CLI skill
 - `["peekaboo"]` only if the host really needs screenshot capture
 
-The secure MVP compose now bakes `gog` into the secure image by default. Browser runtime is also enabled by default in secure compose (`OPENCLAW_INSTALL_BROWSER=1`) so browser tools work immediately; set `OPENCLAW_INSTALL_BROWSER=0` when disk-constrained hosts need a smaller image.
+Secure compose defaults skip compiling and installing `gog` (`OPENCLAW_BUILD_GOG=0`, `OPENCLAW_INSTALL_GOG=0`) to keep Docker builds small. Set both to `1` when you need the Google Workspace `gog` CLI in the image. Browser runtime is **off** by default in secure compose (`OPENCLAW_INSTALL_BROWSER=0`) so image builds avoid apt + Playwright Chromium; set `OPENCLAW_INSTALL_BROWSER=1` when you need bundled browser tools.
 
 Do not enable marketplace or third-party skills in production until they are reviewed.
 

@@ -1,0 +1,15 @@
+# Optional overlay: serve gateway + Control UI from a host directory instead of /app/dist in the image.
+# Use when you want to ship a new dist/ without rebuilding the Docker image.
+#
+# First sync a full tree (pnpm build && pnpm ui:build) into ${HOME}/.openclaw/dist-patch-runtime on the host,
+# then:
+#   cd /path/to/openclaw && HOME=/root docker compose \
+#     -f deploy/secure/docker-compose.secure.yml \
+#     -f deploy/secure/docker-compose.dist-patch.override.yml \
+#     up -d
+#
+# After future dist updates, replace that directory on the host and restart the openclaw service.
+services:
+  openclaw:
+    volumes:
+      - ${HOME}/.openclaw/dist-patch-runtime:/app/dist:ro

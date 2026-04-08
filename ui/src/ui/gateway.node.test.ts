@@ -80,6 +80,9 @@ vi.mock("./device-identity.ts", () => ({
 }));
 
 const { GatewayBrowserClient } = await import("./gateway.ts");
+const loopbackGatewayUrl = "ws://127.0.0.1:18789";
+const ipv6LoopbackGatewayUrl = "ws://[::1]:18789";
+const otherGatewayUrl = "wss://secure.example/openclaw";
 
 function createStorageMock(): Storage {
   const store = new Map<string, string>();
@@ -122,6 +125,16 @@ function stubInsecureCrypto() {
 describe("GatewayBrowserClient", () => {
   beforeEach(() => {
     const storage = createStorageMock();
+    const windowLike = {
+      localStorage: storage,
+      location: {
+        href: "http://127.0.0.1:18789/control-ui",
+        host: "127.0.0.1:18789",
+      },
+      clearTimeout: (id: ReturnType<typeof setTimeout>) => globalThis.clearTimeout(id),
+      setTimeout: (callback: () => void, timeout?: number) =>
+        globalThis.setTimeout(callback, timeout),
+    } as unknown as Window & typeof globalThis;
     wsInstances.length = 0;
     loadOrCreateDeviceIdentityMock.mockReset();
     signDevicePayloadMock.mockClear();
@@ -131,16 +144,26 @@ describe("GatewayBrowserClient", () => {
       publicKey: "public-key", // pragma: allowlist secret
     });
 
+    vi.stubGlobal("window", windowLike);
     vi.stubGlobal("localStorage", storage);
-    Object.defineProperty(window, "localStorage", {
-      configurable: true,
-      value: storage,
-    });
+    vi.stubGlobal("navigator", {
+      language: "en-US",
+      platform: "MacIntel",
+      userAgent: "vitest",
+    } as Navigator);
     localStorage.clear();
     vi.stubGlobal("WebSocket", MockWebSocket);
 
     storeDeviceAuthToken({
       deviceId: "device-1",
+      gatewayUrl: loopbackGatewayUrl,
+      role: "operator",
+      token: "stored-device-token",
+      scopes: ["operator.admin", "operator.approvals", "operator.pairing"],
+    });
+    storeDeviceAuthToken({
+      deviceId: "device-1",
+      gatewayUrl: ipv6LoopbackGatewayUrl,
       role: "operator",
       token: "stored-device-token",
       scopes: ["operator.admin", "operator.approvals", "operator.pairing"],
@@ -154,7 +177,7 @@ describe("GatewayBrowserClient", () => {
 
   it("prefers explicit shared auth over cached device tokens", async () => {
     const client = new GatewayBrowserClient({
-      url: "ws://127.0.0.1:18789",
+      url: loopbackGatewayUrl,
       token: "shared-auth-token",
     });
 
@@ -250,7 +273,7 @@ describe("GatewayBrowserClient", () => {
 
   it("uses cached device tokens only when no explicit shared auth is provided", async () => {
     const client = new GatewayBrowserClient({
-      url: "ws://127.0.0.1:18789",
+      url: loopbackGatewayUrl,
     });
 
     client.start();
@@ -279,7 +302,7 @@ describe("GatewayBrowserClient", () => {
   it("retries once with device token after token mismatch when shared token is explicit", async () => {
     vi.useFakeTimers();
     const client = new GatewayBrowserClient({
-      url: "ws://127.0.0.1:18789",
+      url: loopbackGatewayUrl,
       token: "shared-auth-token",
     });
 
@@ -341,9 +364,13 @@ describe("GatewayBrowserClient", () => {
     });
     await vi.waitFor(() => expect(ws2.readyState).toBe(3));
     ws2.emitClose(4008, "connect failed");
-    expect(loadDeviceAuthToken({ deviceId: "device-1", role: "operator" })?.token).toBe(
-      "stored-device-token",
-    );
+    expect(
+      loadDeviceAuthToken({
+        deviceId: "device-1",
+        gatewayUrl: loopbackGatewayUrl,
+        role: "operator",
+      })?.token,
+    ).toBe("stored-device-token");
     await vi.advanceTimersByTimeAsync(30_000);
     expect(wsInstances).toHaveLength(2);
 
@@ -353,7 +380,7 @@ describe("GatewayBrowserClient", () => {
   it("treats IPv6 loopback as trusted for bounded device-token retry", async () => {
     vi.useFakeTimers();
     const client = new GatewayBrowserClient({
-      url: "ws://[::1]:18789",
+      url: ipv6LoopbackGatewayUrl,
       token: "shared-auth-token",
     });
 
@@ -411,7 +438,7 @@ describe("GatewayBrowserClient", () => {
     localStorage.clear();
 
     const client = new GatewayBrowserClient({
-      url: "ws://127.0.0.1:18789",
+      url: loopbackGatewayUrl,
       token: "shared-auth-token",
     });
 
@@ -451,7 +478,7 @@ describe("GatewayBrowserClient", () => {
     localStorage.clear();
 
     const client = new GatewayBrowserClient({
-      url: "ws://127.0.0.1:18789",
+      url: loopbackGatewayUrl,
     });
 
     client.start();
@@ -482,5 +509,95 @@ describe("GatewayBrowserClient", () => {
     expect(wsInstances).toHaveLength(1);
 
     vi.useRealTimers();
+  });
+
+  it("does not reuse a device token from another gateway scope", async () => {
+    localStorage.clear();
+    storeDeviceAuthToken({
+      deviceId: "device-1",
+      gatewayUrl: otherGatewayUrl,
+      role: "operator",
+      token: "other-gateway-token",
+      scopes: ["operator.admin"],
+    });
+
+    const client = new GatewayBrowserClient({
+      url: loopbackGatewayUrl,
+    });
+
+    client.start();
+    const ws = getLatestWebSocket();
+    ws.emitOpen();
+    ws.emitMessage({
+      type: "event",
+      event: "connect.challenge",
+      payload: { nonce: "nonce-1" },
+    });
+    await vi.waitFor(() => expect(ws.sent.length).toBeGreaterThan(0));
+
+    const connectFrame = JSON.parse(ws.sent.at(-1) ?? "{}") as {
+      params?: { auth?: { token?: string } };
+    };
+    expect(connectFrame.params?.auth?.token).toBeUndefined();
+  });
+
+  it("clears only the mismatched gateway scope after device token mismatch", async () => {
+    localStorage.clear();
+    storeDeviceAuthToken({
+      deviceId: "device-1",
+      gatewayUrl: loopbackGatewayUrl,
+      role: "operator",
+      token: "bad-loopback-token",
+      scopes: ["operator.admin"],
+    });
+    storeDeviceAuthToken({
+      deviceId: "device-1",
+      gatewayUrl: otherGatewayUrl,
+      role: "operator",
+      token: "other-gateway-token",
+      scopes: ["operator.admin"],
+    });
+
+    const client = new GatewayBrowserClient({
+      url: loopbackGatewayUrl,
+    });
+
+    client.start();
+    const ws = getLatestWebSocket();
+    ws.emitOpen();
+    ws.emitMessage({
+      type: "event",
+      event: "connect.challenge",
+      payload: { nonce: "nonce-1" },
+    });
+    await vi.waitFor(() => expect(ws.sent.length).toBeGreaterThan(0));
+    const connect = JSON.parse(ws.sent.at(-1) ?? "{}") as { id: string };
+
+    ws.emitMessage({
+      type: "res",
+      id: connect.id,
+      ok: false,
+      error: {
+        code: "INVALID_REQUEST",
+        message: "unauthorized",
+        details: { code: "AUTH_DEVICE_TOKEN_MISMATCH" },
+      },
+    });
+    await vi.waitFor(() => expect(ws.readyState).toBe(3));
+
+    expect(
+      loadDeviceAuthToken({
+        deviceId: "device-1",
+        gatewayUrl: loopbackGatewayUrl,
+        role: "operator",
+      }),
+    ).toBeNull();
+    expect(
+      loadDeviceAuthToken({
+        deviceId: "device-1",
+        gatewayUrl: otherGatewayUrl,
+        role: "operator",
+      })?.token,
+    ).toBe("other-gateway-token");
   });
 });

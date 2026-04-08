@@ -594,7 +594,9 @@ describe("sessions", () => {
         { sessionFile: bot2Session },
         { agentId: "bot1" },
       );
-      expect(sessionFile).toBe(bot2Session);
+      expect(sessionFile).toBe(
+        path.join(path.resolve("/different/state"), "agents", "bot2", "sessions", "sess-1.jsonl"),
+      );
     });
   });
 

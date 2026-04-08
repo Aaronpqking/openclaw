@@ -46,6 +46,11 @@ import { applyMergePatch } from "./merge-patch.js";
 import { normalizeExecSafeBinProfilesInConfig } from "./normalize-exec-safe-bin.js";
 import { normalizeConfigPaths } from "./normalize-paths.js";
 import { resolveConfigPath, resolveDefaultConfigCandidates, resolveStateDir } from "./paths.js";
+import {
+  evaluateProtectedConfigMutation,
+  summarizeProtectedValueForAudit,
+  type ProtectedConfigMutationContext,
+} from "./protected-mutation.js";
 import { isBlockedObjectKey } from "./prototype-keys.js";
 import { applyConfigOverrides } from "./runtime-overrides.js";
 import type { OpenClawConfig, ConfigFileSnapshot, LegacyConfigIssue } from "./types.js";
@@ -61,6 +66,7 @@ export { MissingEnvVarError } from "./env-substitution.js";
 
 const SHELL_ENV_EXPECTED_KEYS = [
   "OPENAI_API_KEY",
+  "GROQ_API_KEY",
   "ANTHROPIC_API_KEY",
   "ANTHROPIC_OAUTH_TOKEN",
   "GEMINI_API_KEY",
@@ -117,6 +123,36 @@ type ConfigWriteAuditRecord = {
   errorMessage?: string;
 };
 
+type ConfigProtectedMutationAuditRecord = {
+  ts: string;
+  source: "config-io";
+  event: "config.protectedMutation";
+  configPath: string;
+  pid: number;
+  ppid: number;
+  cwd: string;
+  argv: string[];
+  sourceTag: string;
+  actor: string | null;
+  requestId: string | null;
+  approvalContext: string | null;
+  approved: boolean;
+  productionMode: boolean;
+  result: "allow" | "deny";
+  reason: string;
+  changes: Array<{
+    path: string;
+    class: string;
+    previousValue: unknown;
+    nextValue: unknown;
+  }>;
+  validationIssues: Array<{
+    path: string;
+    code: string;
+    message: string;
+  }>;
+};
+
 export type ParseConfigJson5Result = { ok: true; parsed: unknown } | { ok: false; error: string };
 export type ConfigWriteOptions = {
   /**
@@ -134,6 +170,11 @@ export type ConfigWriteOptions = {
    * even if schema/default normalization reintroduces them.
    */
   unsetPaths?: string[][];
+  /**
+   * Optional protected-key mutation context.
+   * Used for production policy checks and protected mutation audit records.
+   */
+  protectedMutation?: ProtectedConfigMutationContext;
 };
 
 export type ReadConfigFileSnapshotForWriteResult = {
@@ -564,9 +605,50 @@ function resolveConfigWriteSuspiciousReasons(params: {
   return reasons;
 }
 
-async function appendConfigWriteAuditRecord(
+function formatStatOwner(uid?: number, gid?: number): string {
+  const uidText = typeof uid === "number" ? String(uid) : "?";
+  const gidText = typeof gid === "number" ? String(gid) : "?";
+  return `${uidText}:${gidText}`;
+}
+
+function formatStatMode(mode?: number): string {
+  if (typeof mode !== "number") {
+    return "???";
+  }
+  return (mode & 0o777).toString(8).padStart(3, "0");
+}
+
+function describePermissionSnapshot(fsModule: typeof fs, configPath: string): string[] {
+  const lines: string[] = [];
+  const configDir = path.dirname(configPath);
+  const statSync = (fsModule as { statSync?: typeof fs.statSync }).statSync;
+  if (typeof statSync !== "function") {
+    lines.push("config_stat: unavailable (statSync unavailable)");
+    lines.push("config_dir_stat: unavailable (statSync unavailable)");
+    return lines;
+  }
+  try {
+    const configStat = statSync(configPath);
+    lines.push(
+      `config_stat: path=${configPath} owner=${formatStatOwner(configStat.uid, configStat.gid)} perms=${formatStatMode(configStat.mode)}`,
+    );
+  } catch (err) {
+    lines.push(`config_stat: unavailable (${String(err)})`);
+  }
+  try {
+    const dirStat = statSync(configDir);
+    lines.push(
+      `config_dir_stat: path=${configDir} owner=${formatStatOwner(dirStat.uid, dirStat.gid)} perms=${formatStatMode(dirStat.mode)}`,
+    );
+  } catch (err) {
+    lines.push(`config_dir_stat: unavailable (${String(err)})`);
+  }
+  return lines;
+}
+
+async function appendConfigAuditRecord(
   deps: Required<ConfigIoDeps>,
-  record: ConfigWriteAuditRecord,
+  record: ConfigWriteAuditRecord | ConfigProtectedMutationAuditRecord,
 ): Promise<void> {
   try {
     const auditPath = resolveConfigAuditLogPath(deps.env, deps.homedir);
@@ -1033,17 +1115,20 @@ export function createConfigIO(overrides: ConfigIoDeps = {}) {
       const nodeErr = err as NodeJS.ErrnoException;
       let message: string;
       if (nodeErr?.code === "EACCES") {
-        // Permission denied — common in Docker/container deployments where the
-        // config file is owned by root but the gateway runs as a non-root user.
+        const euid = process.geteuid?.();
+        const egid = process.getegid?.();
         const uid = process.getuid?.();
-        const uidHint = typeof uid === "number" ? String(uid) : "$(id -u)";
+        const gid = process.getgid?.();
+        const statLines = describePermissionSnapshot(deps.fs, configPath);
         message = [
           `read failed: ${String(err)}`,
           ``,
-          `Config file is not readable by the current process. If running in a container`,
-          `or 1-click deployment, fix ownership with:`,
-          `  chown ${uidHint} "${configPath}"`,
-          `Then restart the gateway.`,
+          `Config file is not readable by the current process.`,
+          `runtime_identity: uid=${typeof uid === "number" ? uid : "?"} gid=${typeof gid === "number" ? gid : "?"} euid=${typeof euid === "number" ? euid : "?"} egid=${typeof egid === "number" ? egid : "?"}`,
+          ...statLines,
+          `Expected: protected config remains deploy/operator writable only, and runtime-readable.`,
+          `Repair through deploy/operator preflight (not runtime self-repair), then restart.`,
+          `Suggested check: deploy/secure/scripts/runtime-permissions-preflight.sh`,
         ].join("\n");
         deps.logger.error(message);
       } else {
@@ -1184,6 +1269,49 @@ export function createConfigIO(overrides: ConfigIoDeps = {}) {
         }
       }
     }
+    const protectedChangedPaths = new Set<string>();
+    collectChangedPaths(snapshot.resolved ?? {}, outputConfig, "", protectedChangedPaths);
+    const protectedDecision = evaluateProtectedConfigMutation({
+      previousConfig: snapshot.resolved ?? {},
+      nextConfig: outputConfig,
+      changedPaths: protectedChangedPaths,
+      env: deps.env,
+      context: options.protectedMutation,
+    });
+    if (protectedDecision) {
+      await appendConfigAuditRecord(deps, {
+        ts: new Date().toISOString(),
+        source: "config-io",
+        event: "config.protectedMutation",
+        configPath,
+        pid: process.pid,
+        ppid: process.ppid,
+        cwd: process.cwd(),
+        argv: process.argv.slice(0, 8),
+        sourceTag: protectedDecision.source,
+        actor: protectedDecision.actor,
+        requestId: protectedDecision.requestId,
+        approvalContext: protectedDecision.approvalContext,
+        approved: protectedDecision.approved,
+        productionMode: protectedDecision.productionMode,
+        result: protectedDecision.allowed ? "allow" : "deny",
+        reason: protectedDecision.reason,
+        changes: protectedDecision.changes.map((change) => ({
+          path: change.path,
+          class: change.class,
+          previousValue: summarizeProtectedValueForAudit(change.path, change.previousValue),
+          nextValue: summarizeProtectedValueForAudit(change.path, change.nextValue),
+        })),
+        validationIssues: protectedDecision.validationIssues.map((issue) => ({
+          path: issue.path,
+          code: issue.code,
+          message: issue.message,
+        })),
+      });
+      if (!protectedDecision.allowed) {
+        throw new Error(protectedDecision.reason);
+      }
+    }
     // Do NOT apply runtime defaults when writing — user config should only contain
     // explicitly set values. Runtime defaults are applied when loading (issue #6070).
     const stampedOutputConfig = stampConfigVersion(outputConfig);
@@ -1275,7 +1403,7 @@ export function createConfigIO(overrides: ConfigIoDeps = {}) {
         err && typeof err === "object" && "message" in err && typeof err.message === "string"
           ? err.message
           : undefined;
-      await appendConfigWriteAuditRecord(deps, {
+      await appendConfigAuditRecord(deps, {
         ...auditRecordBase,
         result,
         nextHash: result === "failed" ? null : auditRecordBase.nextHash,
@@ -1521,6 +1649,7 @@ export async function writeConfigFile(
   await io.writeConfigFile(nextCfg, {
     envSnapshotForRestore: sameConfigPath ? options.envSnapshotForRestore : undefined,
     unsetPaths: options.unsetPaths,
+    protectedMutation: options.protectedMutation,
   });
   // Keep the last-known-good runtime snapshot active until the specialized refresh path
   // succeeds, so concurrent readers do not observe unresolved SecretRefs mid-refresh.

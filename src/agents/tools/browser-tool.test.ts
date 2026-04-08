@@ -103,10 +103,12 @@ vi.mock("./nodes-utils.js", async () => {
 });
 
 const gatewayMocks = vi.hoisted(() => ({
-  callGatewayTool: vi.fn(async () => ({
-    ok: true,
-    payload: { result: { ok: true, running: true } },
-  })),
+  callGatewayTool: vi.fn(
+    async (): Promise<unknown> => ({
+      ok: true,
+      payload: { result: { ok: true, running: true } },
+    }),
+  ),
 }));
 vi.mock("./gateway.js", () => gatewayMocks);
 
@@ -174,6 +176,16 @@ function setResolvedBrowserProfiles(
 function registerBrowserToolAfterEachReset() {
   afterEach(() => {
     resetBrowserToolMocks();
+  });
+}
+
+function createApprovalContextBrowserTool() {
+  return createBrowserTool({
+    agentSessionKey: "agent:main:main",
+    agentChannel: "tui",
+    agentAccountId: "ops",
+    currentChannelId: "C123",
+    currentThreadTs: "thread-1",
   });
 }
 
@@ -382,9 +394,12 @@ describe("browser tool snapshot maxChars", () => {
     });
     const tool = createBrowserTool();
     await tool.execute?.("call-1", {
-      action: "dialog",
+      action: "act",
       target: "node",
-      accept: true,
+      request: {
+        kind: "wait",
+        timeMs: 1000,
+      },
     });
 
     expect(gatewayMocks.callGatewayTool).toHaveBeenCalledWith(
@@ -507,13 +522,12 @@ describe("browser tool url alias support", () => {
 describe("browser tool act compatibility", () => {
   registerBrowserToolAfterEachReset();
 
-  it("accepts flattened act params for backward compatibility", async () => {
+  it("accepts flattened safe act params for backward compatibility", async () => {
     const tool = createBrowserTool();
     await tool.execute?.("call-1", {
       action: "act",
-      kind: "type",
+      kind: "hover",
       ref: "f1e3",
-      text: "Test Title",
       targetId: "tab-1",
       timeoutMs: 5000,
     });
@@ -521,9 +535,8 @@ describe("browser tool act compatibility", () => {
     expect(browserActionsMocks.browserAct).toHaveBeenCalledWith(
       undefined,
       expect.objectContaining({
-        kind: "type",
+        kind: "hover",
         ref: "f1e3",
-        text: "Test Title",
         targetId: "tab-1",
         timeoutMs: 5000,
       }),
@@ -538,8 +551,8 @@ describe("browser tool act compatibility", () => {
       kind: "click",
       ref: "legacy-ref",
       request: {
-        kind: "press",
-        key: "Enter",
+        kind: "hover",
+        ref: "hover-ref",
         targetId: "tab-2",
       },
     });
@@ -547,11 +560,100 @@ describe("browser tool act compatibility", () => {
     expect(browserActionsMocks.browserAct).toHaveBeenCalledWith(
       undefined,
       {
-        kind: "press",
-        key: "Enter",
+        kind: "hover",
+        ref: "hover-ref",
         targetId: "tab-2",
       },
       expect.objectContaining({ profile: undefined }),
+    );
+  });
+
+  it("blocks submit-capable act kinds without an approval-tracked path", async () => {
+    gatewayMocks.callGatewayTool.mockResolvedValueOnce({
+      id: "12345678-1234-1234-1234-123456789012",
+      expiresAtMs: 1_800_000_000_000,
+    });
+    const tool = createApprovalContextBrowserTool();
+
+    const result = await tool.execute?.("call-1", {
+      action: "act",
+      request: {
+        kind: "click",
+        ref: "btn-1",
+      },
+    });
+
+    expect(result?.details).toMatchObject({
+      status: "approval-pending",
+      command: "browser act click",
+    });
+    expect(browserActionsMocks.browserAct).not.toHaveBeenCalled();
+  });
+
+  it("keeps safe read-only act kinds available", async () => {
+    const tool = createBrowserTool();
+
+    await tool.execute?.("call-1", {
+      action: "act",
+      request: {
+        kind: "hover",
+        ref: "btn-1",
+      },
+    });
+
+    expect(browserActionsMocks.browserAct).toHaveBeenCalledWith(
+      undefined,
+      expect.objectContaining({
+        kind: "hover",
+        ref: "btn-1",
+      }),
+      expect.objectContaining({ profile: undefined }),
+    );
+  });
+});
+
+describe("browser tool mutation boundaries", () => {
+  registerBrowserToolAfterEachReset();
+
+  it("blocks upload without an approval-tracked path", async () => {
+    gatewayMocks.callGatewayTool.mockResolvedValueOnce({
+      id: "12345678-1234-1234-1234-123456789012",
+      expiresAtMs: 1_800_000_000_000,
+    });
+    const tool = createApprovalContextBrowserTool();
+
+    const result = await tool.execute?.("call-1", {
+      action: "upload",
+      paths: ["example.txt"],
+    });
+
+    expect(result?.details).toMatchObject({
+      status: "approval-pending",
+      command: "browser upload example.txt",
+    });
+  });
+
+  it("blocks dialog arming without an approval-tracked path", async () => {
+    gatewayMocks.callGatewayTool
+      .mockResolvedValueOnce({
+        id: "12345678-1234-1234-1234-123456789012",
+        expiresAtMs: 1_800_000_000_000,
+        decision: "allow-once",
+      })
+      .mockResolvedValue({ ok: true });
+    const tool = createApprovalContextBrowserTool();
+
+    await tool.execute?.("call-1", {
+      action: "dialog",
+      accept: true,
+    });
+
+    expect(browserActionsMocks.browserArmDialog).toHaveBeenCalledWith(
+      undefined,
+      expect.objectContaining({
+        accept: true,
+        profile: undefined,
+      }),
     );
   });
 });
@@ -747,10 +849,15 @@ describe("browser tool act stale target recovery", () => {
   });
 
   it("does not retry mutating user-browser act requests without targetId", async () => {
+    gatewayMocks.callGatewayTool.mockResolvedValueOnce({
+      id: "12345678-1234-1234-1234-123456789012",
+      expiresAtMs: 1_800_000_000_000,
+      decision: "allow-once",
+    });
     browserActionsMocks.browserAct.mockRejectedValueOnce(new Error("404: tab not found"));
     browserClientMocks.browserTabs.mockResolvedValueOnce([{ targetId: "only-tab" }]);
 
-    const tool = createBrowserTool();
+    const tool = createApprovalContextBrowserTool();
     await expect(
       tool.execute?.("call-1", {
         action: "act",

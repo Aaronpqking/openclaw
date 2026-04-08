@@ -328,7 +328,7 @@ export const configHandlers: GatewayRequestHandlers = {
     }
     respond(true, result, undefined);
   },
-  "config.set": async ({ params, respond }) => {
+  "config.set": async ({ params, respond, client }) => {
     if (!assertValidParams(params, validateConfigSetParams, "config.set", respond)) {
       return;
     }
@@ -340,7 +340,15 @@ export const configHandlers: GatewayRequestHandlers = {
     if (!parsed) {
       return;
     }
-    await writeConfigFile(parsed.config, writeOptions);
+    const actor = resolveControlPlaneActor(client);
+    await writeConfigFile(parsed.config, {
+      ...writeOptions,
+      protectedMutation: {
+        source: "gateway.config.set",
+        actor: formatControlPlaneActor(actor),
+        approved: false,
+      },
+    });
     respond(
       true,
       {
@@ -430,7 +438,15 @@ export const configHandlers: GatewayRequestHandlers = {
     context?.logGateway?.info(
       `config.patch write ${formatControlPlaneActor(actor)} changedPaths=${summarizeChangedPaths(changedPaths)} restartReason=config.patch`,
     );
-    await writeConfigFile(validated.config, writeOptions);
+    await writeConfigFile(validated.config, {
+      ...writeOptions,
+      protectedMutation: {
+        source: "gateway.config.patch",
+        actor: formatControlPlaneActor(actor),
+        approved: true,
+        approvalContext: "gateway-admin-apply",
+      },
+    });
 
     const { sessionKey, note, restartDelayMs, deliveryContext, threadId } =
       resolveConfigRestartRequest(params);
@@ -490,7 +506,15 @@ export const configHandlers: GatewayRequestHandlers = {
     context?.logGateway?.info(
       `config.apply write ${formatControlPlaneActor(actor)} changedPaths=${summarizeChangedPaths(changedPaths)} restartReason=config.apply`,
     );
-    await writeConfigFile(parsed.config, writeOptions);
+    await writeConfigFile(parsed.config, {
+      ...writeOptions,
+      protectedMutation: {
+        source: "gateway.config.apply",
+        actor: formatControlPlaneActor(actor),
+        approved: true,
+        approvalContext: "gateway-admin-apply",
+      },
+    });
 
     const { sessionKey, note, restartDelayMs, deliveryContext, threadId } =
       resolveConfigRestartRequest(params);

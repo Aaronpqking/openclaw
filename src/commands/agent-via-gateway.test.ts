@@ -107,6 +107,29 @@ describe("agentCliCommand", () => {
     });
   });
 
+  it("forwards explicit provider/model overrides to gateway runs", async () => {
+    await withTempStore(async () => {
+      mockGatewaySuccessReply();
+
+      await agentCliCommand(
+        {
+          message: "hi",
+          to: "+1555",
+          provider: "openai",
+          model: "gpt-5.4",
+        },
+        runtime,
+      );
+
+      expect(callGateway).toHaveBeenCalledTimes(1);
+      const request = vi.mocked(callGateway).mock.calls[0]?.[0] as {
+        params?: { provider?: string; model?: string };
+      };
+      expect(request.params?.provider).toBe("openai");
+      expect(request.params?.model).toBe("gpt-5.4");
+    });
+  });
+
   it("falls back to embedded agent when gateway fails", async () => {
     await withTempStore(async () => {
       vi.mocked(callGateway).mockRejectedValue(new Error("gateway not connected"));

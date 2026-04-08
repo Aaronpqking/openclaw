@@ -125,6 +125,13 @@ describe("config io write", () => {
     expect((await readPersistedCommands(configPath))?.ownerDisplay).toBe("hash");
   }
 
+  async function createControlUiRoot(home: string, name: string): Promise<string> {
+    const root = path.join(home, name);
+    await fs.mkdir(path.join(root, "assets"), { recursive: true });
+    await fs.writeFile(path.join(root, "index.html"), "<!doctype html><html></html>\n", "utf-8");
+    return root;
+  }
+
   it("persists caller changes onto resolved config without leaking runtime defaults", async () => {
     await withSuiteHome(async (home) => {
       const { configPath, io, snapshot } = await writeConfigAndCreateIo({
@@ -546,6 +553,249 @@ describe("config io write", () => {
       expect(last.watchMode).toBe(true);
       expect(last.watchSession).toBe("watch-session-1");
       expect(last.watchCommand).toBe("gateway --force");
+    });
+  });
+
+  it("denies protected direct writes without approval in production mode", async () => {
+    await withSuiteHome(async (home) => {
+      const root = await createControlUiRoot(home, "control-ui");
+      const { io, snapshot } = await writeConfigAndCreateIo({
+        home,
+        initialConfig: { gateway: { mode: "local" } },
+        env: { NODE_ENV: "production" } as NodeJS.ProcessEnv,
+      });
+      const next = structuredClone(snapshot.resolved);
+      next.gateway = {
+        ...next.gateway,
+        controlUi: {
+          ...next.gateway?.controlUi,
+          root,
+        },
+      };
+      await expect(
+        io.writeConfigFile(next, {
+          protectedMutation: {
+            source: "cli.config.set",
+            actor: "test-cli",
+            approved: false,
+          },
+        }),
+      ).rejects.toThrow('Protected config mutation denied for source "cli.config.set"');
+    });
+  });
+
+  it("denies protected production writes when source context is missing", async () => {
+    await withSuiteHome(async (home) => {
+      const root = await createControlUiRoot(home, "control-ui-missing-source");
+      const { io, snapshot } = await writeConfigAndCreateIo({
+        home,
+        initialConfig: { gateway: { mode: "local" } },
+        env: { NODE_ENV: "production" } as NodeJS.ProcessEnv,
+      });
+      const next = structuredClone(snapshot.resolved);
+      next.gateway = {
+        ...next.gateway,
+        controlUi: {
+          ...next.gateway?.controlUi,
+          root,
+        },
+      };
+      await expect(io.writeConfigFile(next)).rejects.toThrow("missing source context");
+    });
+  });
+
+  it("allows unapproved production writes for channel config surfaces", async () => {
+    await withSuiteHome(async (home) => {
+      const { io, configPath, snapshot } = await writeConfigAndCreateIo({
+        home,
+        initialConfig: {
+          gateway: { mode: "local" },
+          channels: { slack: { allowFrom: ["U123"] } },
+        },
+        env: { NODE_ENV: "production" } as NodeJS.ProcessEnv,
+      });
+      const next = structuredClone(snapshot.resolved);
+      next.channels = {
+        ...next.channels,
+        slack: {
+          ...next.channels?.slack,
+          allowFrom: ["U123", "U456"],
+        },
+      };
+
+      await io.writeConfigFile(next, {
+        protectedMutation: {
+          source: "cli.config.set",
+          actor: "test-cli",
+          approved: false,
+        },
+      });
+
+      const persisted = JSON.parse(await fs.readFile(configPath, "utf-8")) as {
+        channels?: { slack?: { allowFrom?: string[] } };
+      };
+      expect(persisted.channels?.slack?.allowFrom).toEqual(["U123", "U456"]);
+    });
+  });
+
+  it("still denies unapproved production writes when enforced classes are changed", async () => {
+    await withSuiteHome(async (home) => {
+      const { io, snapshot } = await writeConfigAndCreateIo({
+        home,
+        initialConfig: {
+          gateway: { mode: "local", bind: "loopback" },
+          channels: { slack: { allowFrom: ["U123"] } },
+        },
+        env: { NODE_ENV: "production" } as NodeJS.ProcessEnv,
+      });
+      const next = structuredClone(snapshot.resolved);
+      next.gateway = {
+        ...next.gateway,
+        bind: "lan",
+      };
+      next.channels = {
+        ...next.channels,
+        slack: {
+          ...next.channels?.slack,
+          allowFrom: ["U123", "U456"],
+        },
+      };
+
+      await expect(
+        io.writeConfigFile(next, {
+          protectedMutation: {
+            source: "cli.config.set",
+            actor: "test-cli",
+            approved: false,
+          },
+        }),
+      ).rejects.toThrow('Protected config mutation denied for source "cli.config.set"');
+    });
+  });
+
+  it("accepts a validated protected write when approval context is present", async () => {
+    await withSuiteHome(async (home) => {
+      const root = await createControlUiRoot(home, "control-ui-approved");
+      const { io, configPath, snapshot } = await writeConfigAndCreateIo({
+        home,
+        initialConfig: { gateway: { mode: "local" } },
+        env: { NODE_ENV: "production" } as NodeJS.ProcessEnv,
+      });
+      const next = structuredClone(snapshot.resolved);
+      next.gateway = {
+        ...next.gateway,
+        controlUi: {
+          ...next.gateway?.controlUi,
+          root,
+        },
+      };
+      await io.writeConfigFile(next, {
+        protectedMutation: {
+          source: "gateway.config.apply",
+          actor: "gateway:test",
+          approved: true,
+          approvalContext: "test-approved-path",
+          requestId: "req-1",
+        },
+      });
+      const persisted = JSON.parse(await fs.readFile(configPath, "utf-8")) as {
+        gateway?: { controlUi?: { root?: string } };
+      };
+      expect(persisted.gateway?.controlUi?.root).toBe(root);
+    });
+  });
+
+  it("rejects invalid gateway.controlUi.root candidates and keeps active config unchanged", async () => {
+    await withSuiteHome(async (home) => {
+      const validRoot = await createControlUiRoot(home, "control-ui-good");
+      const missingRoot = path.join(home, "control-ui-missing");
+      const { io, configPath, snapshot } = await writeConfigAndCreateIo({
+        home,
+        initialConfig: {
+          gateway: {
+            mode: "local",
+            controlUi: { root: validRoot },
+          },
+        },
+        env: { NODE_ENV: "production" } as NodeJS.ProcessEnv,
+      });
+      const next = structuredClone(snapshot.resolved);
+      next.gateway = {
+        ...next.gateway,
+        controlUi: {
+          ...next.gateway?.controlUi,
+          root: missingRoot,
+        },
+      };
+
+      await expect(
+        io.writeConfigFile(next, {
+          protectedMutation: {
+            source: "gateway.config.apply",
+            actor: "gateway:test",
+            approved: true,
+            approvalContext: "test-approved-path",
+          },
+        }),
+      ).rejects.toThrow("does not exist or is missing index.html");
+
+      const persisted = JSON.parse(await fs.readFile(configPath, "utf-8")) as {
+        gateway?: { controlUi?: { root?: string } };
+      };
+      expect(persisted.gateway?.controlUi?.root).toBe(validRoot);
+    });
+  });
+
+  it("audits both allowed and denied protected mutation attempts", async () => {
+    await withSuiteHome(async (home) => {
+      const root = await createControlUiRoot(home, "control-ui-audit");
+      const { io, snapshot } = await writeConfigAndCreateIo({
+        home,
+        initialConfig: { gateway: { mode: "local" } },
+        env: { NODE_ENV: "production" } as NodeJS.ProcessEnv,
+      });
+      const next = structuredClone(snapshot.resolved);
+      next.gateway = {
+        ...next.gateway,
+        controlUi: {
+          ...next.gateway?.controlUi,
+          root,
+        },
+      };
+      await expect(
+        io.writeConfigFile(next, {
+          protectedMutation: {
+            source: "cli.config.set",
+            actor: "actor-deny",
+            approved: false,
+            requestId: "deny-1",
+          },
+        }),
+      ).rejects.toThrow();
+      await io.writeConfigFile(next, {
+        protectedMutation: {
+          source: "gateway.config.apply",
+          actor: "actor-allow",
+          approved: true,
+          approvalContext: "gateway-admin-apply",
+          requestId: "allow-1",
+        },
+      });
+      const auditPath = path.join(home, ".openclaw", "logs", "config-audit.jsonl");
+      const entries = (await fs.readFile(auditPath, "utf-8"))
+        .trim()
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as Record<string, unknown>);
+      const protectedEntries = entries.filter(
+        (entry) => entry.event === "config.protectedMutation",
+      );
+      expect(protectedEntries.length).toBeGreaterThanOrEqual(2);
+      expect(protectedEntries.some((entry) => entry.result === "deny")).toBe(true);
+      expect(protectedEntries.some((entry) => entry.result === "allow")).toBe(true);
+      const firstProtected = protectedEntries.find((entry) => Array.isArray(entry.changes));
+      const changes = firstProtected?.changes as Array<{ path?: string }> | undefined;
+      expect(changes?.some((change) => change.path === "gateway.controlUi.root")).toBe(true);
     });
   });
 });

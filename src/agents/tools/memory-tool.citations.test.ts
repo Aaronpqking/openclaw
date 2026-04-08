@@ -88,6 +88,37 @@ describe("memory search citations", () => {
     const details = result.details as { results: Array<{ snippet: string }> };
     expect(details.results[0]?.snippet).not.toMatch(/Source:/);
   });
+
+  it("reranks same-day token queries toward the token-bearing snippet", async () => {
+    const todayIso = new Date().toISOString().slice(0, 10);
+    setMemorySearchImpl(async () => [
+      {
+        path: `memory/${todayIso}.md`,
+        startLine: 1,
+        endLine: 3,
+        score: 0.93,
+        snippet: "## Validation\n- recovery-memory-validation-20260408T022016Z",
+        source: "memory" as const,
+      },
+      {
+        path: `memory/${todayIso}.md`,
+        startLine: 7,
+        endLine: 10,
+        score: 0.91,
+        snippet:
+          "## Memory proof\n- token: MEMPROOF-2026-04-08-0406Z\n- phrase: copper-badger-skyline",
+        source: "memory" as const,
+      },
+    ]);
+    const tool = createMemorySearchToolOrThrow();
+
+    const result = await tool.execute("call_same_day_token", {
+      query: "What is the memory proof token saved today?",
+    });
+    const details = result.details as { results: Array<{ snippet: string }> };
+
+    expect(details.results[0]?.snippet).toContain("token: MEMPROOF-2026-04-08-0406Z");
+  });
 });
 
 describe("memory tools", () => {

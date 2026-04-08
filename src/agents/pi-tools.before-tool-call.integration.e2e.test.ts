@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { resetDiagnosticSessionStateForTest } from "../logging/diagnostic-session-state.js";
 import { getGlobalHookRunner } from "../plugins/hook-runner-global.js";
@@ -182,6 +185,139 @@ describe("before_tool_call hook integration", () => {
       marker: "B",
     });
     expect(consumeAdjustedParamsForToolCall(sharedToolCallId, "run-a")).toBeUndefined();
+  });
+
+  it("blocks non-gog shell probes for google-workspace intent before plugin hooks", async () => {
+    hookRunner.hasHooks.mockReturnValue(false);
+    const execute = vi.fn().mockResolvedValue({ content: [], details: { ok: true } });
+    // oxlint-disable-next-line typescript/no-explicit-any
+    const tool = wrapToolWithBeforeToolCallHook({ name: "exec", execute } as any, {
+      routeIntent: { googleWorkspace: true },
+    });
+    const extensionContext = {} as Parameters<typeof tool.execute>[3];
+
+    await expect(
+      tool.execute("call-gog-probe", { command: "pwd && ls -la" }, undefined, extensionContext),
+    ).rejects.toThrow("[route:exec_route_not_applicable]");
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("allows gog commands for google-workspace intent", async () => {
+    hookRunner.hasHooks.mockReturnValue(false);
+    const execute = vi.fn().mockResolvedValue({ content: [], details: { ok: true } });
+    // oxlint-disable-next-line typescript/no-explicit-any
+    const tool = wrapToolWithBeforeToolCallHook({ name: "exec", execute } as any, {
+      routeIntent: { googleWorkspace: true },
+    });
+    const extensionContext = {} as Parameters<typeof tool.execute>[3];
+
+    await tool.execute(
+      "call-gog-allow",
+      { command: "gog gmail search newer_than:1d --max 5" },
+      undefined,
+      extensionContext,
+    );
+
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+
+  it("allows env-prefixed gog commands for google-workspace intent", async () => {
+    hookRunner.hasHooks.mockReturnValue(false);
+    const execute = vi.fn().mockResolvedValue({ content: [], details: { ok: true } });
+    // oxlint-disable-next-line typescript/no-explicit-any
+    const tool = wrapToolWithBeforeToolCallHook({ name: "exec", execute } as any, {
+      routeIntent: { googleWorkspace: true },
+    });
+    const extensionContext = {} as Parameters<typeof tool.execute>[3];
+
+    await tool.execute(
+      "call-gog-env",
+      { command: "GOG_ACCOUNT=aaronpqking@gmail.com gog gmail search newer_than:1d --max 5" },
+      undefined,
+      extensionContext,
+    );
+
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+
+  it("remaps stale bundled gog skill paths before route intent is resolved", async () => {
+    hookRunner.hasHooks.mockReturnValue(false);
+    const execute = vi.fn().mockResolvedValue({ content: [], details: { ok: true } });
+    // oxlint-disable-next-line typescript/no-explicit-any
+    const tool = wrapToolWithBeforeToolCallHook({ name: "read", execute } as any);
+    const extensionContext = {} as Parameters<typeof tool.execute>[3];
+    const skillsRoot = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-bundled-skills-"));
+    const gogSkillPath = path.join(skillsRoot, "gog", "SKILL.md");
+    const staleMissingPath = path.join(
+      skillsRoot,
+      "legacy-runtime",
+      "node_modules",
+      "openclaw",
+      "skills",
+      "gog",
+      "SKILL.md",
+    );
+    fs.mkdirSync(path.dirname(gogSkillPath), { recursive: true });
+    fs.writeFileSync(gogSkillPath, "# gog skill\n");
+    const previousBundledSkillsDir = process.env.OPENCLAW_BUNDLED_SKILLS_DIR;
+    process.env.OPENCLAW_BUNDLED_SKILLS_DIR = skillsRoot;
+
+    try {
+      await tool.execute(
+        "call-gog-skill-remap",
+        { path: staleMissingPath },
+        undefined,
+        extensionContext,
+      );
+      expect(execute).toHaveBeenCalledWith(
+        "call-gog-skill-remap",
+        { path: gogSkillPath },
+        undefined,
+        extensionContext,
+      );
+    } finally {
+      if (previousBundledSkillsDir === undefined) {
+        delete process.env.OPENCLAW_BUNDLED_SKILLS_DIR;
+      } else {
+        process.env.OPENCLAW_BUNDLED_SKILLS_DIR = previousBundledSkillsDir;
+      }
+      fs.rmSync(skillsRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks non-gog exec probes (for example find scans) for google-workspace intent", async () => {
+    hookRunner.hasHooks.mockReturnValue(false);
+    const execute = vi.fn().mockResolvedValue({ content: [], details: { ok: true } });
+    // oxlint-disable-next-line typescript/no-explicit-any
+    const tool = wrapToolWithBeforeToolCallHook({ name: "exec", execute } as any, {
+      routeIntent: { googleWorkspace: true },
+    });
+    const extensionContext = {} as Parameters<typeof tool.execute>[3];
+
+    await expect(
+      tool.execute(
+        "call-gog-find-probe",
+        { command: "find /usr -path '*gog*SKILL.md' | head -20" },
+        undefined,
+        extensionContext,
+      ),
+    ).rejects.toThrow("[route:exec_route_not_applicable]");
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("blocks browser attach for google-workspace intent when browser was not explicitly requested", async () => {
+    hookRunner.hasHooks.mockReturnValue(false);
+    const execute = vi.fn().mockResolvedValue({ content: [], details: { ok: true } });
+    // oxlint-disable-next-line typescript/no-explicit-any
+    const tool = wrapToolWithBeforeToolCallHook({ name: "browser", execute } as any, {
+      routeIntent: { googleWorkspace: true, browserExplicitlyRequested: false },
+    });
+    const extensionContext = {} as Parameters<typeof tool.execute>[3];
+
+    await expect(
+      tool.execute("call-gog-browser", { action: "attach" }, undefined, extensionContext),
+    ).rejects.toThrow("[route:browser_attach_not_required]");
+    expect(execute).not.toHaveBeenCalled();
   });
 });
 

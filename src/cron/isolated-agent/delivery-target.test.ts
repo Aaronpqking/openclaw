@@ -265,18 +265,29 @@ describe("resolveDeliveryTarget", () => {
     expect(result.threadId).toBe("thread-2");
   });
 
-  it("uses single configured channel when neither explicit nor session channel exists", async () => {
+  it("returns a clear error when neither explicit recipient nor session route exists", async () => {
     setMainSessionEntry(undefined);
 
     const result = await resolveLastTarget(makeCfg({ bindings: [] }));
-    expect(result.channel).toBe("telegram");
+    expect(result.channel).toBeUndefined();
     expect(result.ok).toBe(false);
     if (result.ok) {
       throw new Error("expected unresolved delivery target");
     }
-    // resolveOutboundTarget provides the standard missing-target error when
-    // no explicit target, no session lastTo, and no plugin resolveDefaultTo.
-    expect(result.error.message).toContain("requires target");
+    expect(result.error.message).toContain("No associated delivery recipient resolved");
+  });
+
+  it("uses the single configured channel when an explicit recipient exists", async () => {
+    setMainSessionEntry(undefined);
+
+    const result = await resolveDeliveryTarget(makeCfg({ bindings: [] }), AGENT_ID, {
+      channel: "last",
+      to: "123456",
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.channel).toBe("telegram");
+    expect(result.to).toBe("123456");
   });
 
   it("returns an error when channel selection is ambiguous", async () => {
@@ -285,7 +296,10 @@ describe("resolveDeliveryTarget", () => {
       new Error("Channel is required when multiple channels are configured: telegram, slack"),
     );
 
-    const result = await resolveLastTarget(makeCfg({ bindings: [] }));
+    const result = await resolveDeliveryTarget(makeCfg({ bindings: [] }), AGENT_ID, {
+      channel: "last",
+      to: "123456",
+    });
     expect(result.channel).toBeUndefined();
     expect(result.to).toBeUndefined();
     expect(result.ok).toBe(false);

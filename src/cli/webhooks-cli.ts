@@ -1,4 +1,5 @@
 import type { Command } from "commander";
+import { loadConfig } from "../config/config.js";
 import { danger } from "../globals.js";
 import {
   type GmailRunOptions,
@@ -16,6 +17,7 @@ import {
   DEFAULT_GMAIL_SUBSCRIPTION,
   DEFAULT_GMAIL_TOPIC,
 } from "../hooks/gmail.js";
+import { probeGoogleWorkspaceReadiness } from "../hooks/google-workspace-readiness.js";
 import { defaultRuntime } from "../runtime.js";
 import { formatDocsLink } from "../terminal/links.js";
 import { theme } from "../terminal/theme.js";
@@ -97,6 +99,40 @@ export function registerWebhooksCli(program: Command) {
       try {
         const parsed = parseGmailRunOptions(opts);
         await runGmailService(parsed);
+      } catch (err) {
+        defaultRuntime.error(danger(String(err)));
+        defaultRuntime.exit(1);
+      }
+    });
+
+  gmail
+    .command("verify")
+    .description("Verify Gmail/Calendar/Drive readiness and delta probes")
+    .option("--json", "Output JSON report", false)
+    .option("--timeout-ms <n>", "Per-probe timeout in milliseconds", "4000")
+    .action(async (opts) => {
+      try {
+        const timeoutMs = numberOption(opts.timeoutMs) ?? 4000;
+        const report = await probeGoogleWorkspaceReadiness({
+          config: loadConfig(),
+          timeoutMs,
+        });
+        if (opts.json) {
+          defaultRuntime.log(JSON.stringify(report, null, 2));
+          return;
+        }
+        defaultRuntime.log(`Google Workspace: ${report.state}`);
+        defaultRuntime.log(report.message);
+        defaultRuntime.log(`Account: ${report.account ?? "(auto)"}`);
+        for (const service of ["gmail", "calendar", "drive"] as const) {
+          const row = report.services[service];
+          const deltaText = typeof row.deltaCount === "number" ? ` delta=${row.deltaCount}` : "";
+          defaultRuntime.log(`- ${service}: ${row.state}${deltaText}`);
+          defaultRuntime.log(`  ${row.message}`);
+          if (row.missingPrerequisite) {
+            defaultRuntime.log(`  next: ${row.missingPrerequisite}`);
+          }
+        }
       } catch (err) {
         defaultRuntime.error(danger(String(err)));
         defaultRuntime.exit(1);

@@ -37,16 +37,29 @@ RUN mkdir -p /out && \
       fi; \
     done
 
+# Optional gog CLI compile (Google Workspace). Set OPENCLAW_BUILD_GOG=0 to skip the
+# Go build (saves disk/time); COPY still receives a stub binary unless you disable install.
 FROM ${OPENCLAW_GO_BOOKWORM_IMAGE} AS gog-build
 ARG TARGETARCH
+ARG OPENCLAW_BUILD_GOG=1
 WORKDIR /src
 RUN --mount=type=cache,id=openclaw-gog-apt-cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,id=openclaw-gog-apt-lists,target=/var/lib/apt,sharing=locked \
-    apt-get update && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates git
-RUN git clone --depth=1 https://github.com/steipete/gogcli.git .
-RUN out_arch="${TARGETARCH:-$(go env GOARCH)}" && \
-    CGO_ENABLED=1 GOARCH="$out_arch" go build -trimpath -o /out/gog ./cmd/gog
+    --mount=type=cache,id=openclaw-gog-tmp,target=/gotmp,sharing=locked \
+    --mount=type=cache,id=openclaw-gog-gomod,target=/go/pkg/mod,sharing=locked \
+    --mount=type=cache,id=openclaw-gog-gocache,target=/root/.cache/go-build,sharing=locked \
+    if [ "$OPENCLAW_BUILD_GOG" != "1" ]; then \
+      mkdir -p /out && \
+      printf '%s\n' '#!/bin/sh' 'echo "gog was not compiled into this image (OPENCLAW_BUILD_GOG=0)" >&2' 'exit 127' > /out/gog && \
+      chmod 0755 /out/gog; \
+    else \
+      apt-get update && \
+      DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates git && \
+      git clone --depth=1 https://github.com/steipete/gogcli.git . && \
+      mkdir -p /out && \
+      TMPDIR=/gotmp out_arch="${TARGETARCH:-$(go env GOARCH)}" && \
+      CGO_ENABLED=1 GOARCH="$out_arch" go build -trimpath -o /out/gog ./cmd/gog; \
+    fi
 
 # ── Stage 2: Build ──────────────────────────────────────────────
 FROM ${OPENCLAW_NODE_BOOKWORM_IMAGE} AS build
@@ -108,8 +121,7 @@ RUN pnpm ui:build
 # Prune dev dependencies and strip build-only metadata before copying
 # runtime assets into the final image.
 FROM build AS runtime-assets
-RUN CI=true pnpm prune --prod && \
-    find dist -type f \( -name '*.d.ts' -o -name '*.d.mts' -o -name '*.d.cts' -o -name '*.map' \) -delete
+RUN find dist -type f \( -name '*.d.ts' -o -name '*.d.mts' -o -name '*.d.cts' -o -name '*.map' \) -delete
 
 # ── Secure runtime fast-path (low-disk hosts) ────────────────────────────
 # This target reuses runtime-assets directly to avoid copying a second full
@@ -118,13 +130,9 @@ FROM runtime-assets AS secure-runtime-assets
 
 WORKDIR /app
 
-# Install system utilities present in bookworm but missing in bookworm-slim.
-RUN --mount=type=cache,id=openclaw-bookworm-apt-cache,target=/var/cache/apt,sharing=locked \
-    --mount=type=cache,id=openclaw-bookworm-apt-lists,target=/var/lib/apt,sharing=locked \
-    apt-get update && \
-    DEBIAN_FRONTEND=noninteractive apt-get upgrade -y --no-install-recommends && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      procps hostname curl git lsof openssl
+# No apt here: `node:*-bookworm` already ships curl, git, openssl, hostname, procps, etc.
+# Only `lsof` is missing; port tooling degrades without it (see `src/infra/ports-inspect.ts`).
+# Add `OPENCLAW_DOCKER_APT_PACKAGES=lsof` at build time if you need `lsof` without changing this file.
 
 RUN chown node:node /app
 
@@ -160,9 +168,7 @@ RUN --mount=type=cache,id=openclaw-bookworm-apt-cache,target=/var/cache/apt,shar
     fi
 
 # Optionally install the gog CLI for Google Workspace skill flows.
-# Build with: docker build --build-arg OPENCLAW_INSTALL_GOG=1 ...
-# Upstream now documents source builds rather than Linux release tarballs,
-# so we compile a matching binary in a dedicated Go build stage.
+# Build gog: OPENCLAW_BUILD_GOG=1. Install: OPENCLAW_INSTALL_GOG=1 (requires a real binary).
 ARG OPENCLAW_INSTALL_GOG=""
 COPY --from=gog-build /out/gog /tmp/gog
 RUN if [ "$OPENCLAW_INSTALL_GOG" = "1" ]; then \
@@ -174,15 +180,40 @@ RUN if [ "$OPENCLAW_INSTALL_GOG" = "1" ]; then \
 # Build with: docker build --build-arg OPENCLAW_INSTALL_BROWSER=1 ...
 # Adds ~300MB but eliminates the 60-90s Playwright install on every container start.
 ARG OPENCLAW_INSTALL_BROWSER=""
-RUN --mount=type=cache,id=openclaw-bookworm-apt-cache,target=/var/cache/apt,sharing=locked \
-    --mount=type=cache,id=openclaw-bookworm-apt-lists,target=/var/lib/apt,sharing=locked \
-    if [ "$OPENCLAW_INSTALL_BROWSER" = "1" ]; then \
+RUN if [ "$OPENCLAW_INSTALL_BROWSER" = "1" ]; then \
       apt-get update && \
-      DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends xvfb && \
+      DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        at-spi2-common \
+        fonts-freefont-ttf \
+        fonts-ipafont-gothic \
+        fonts-liberation \
+        fonts-noto-color-emoji \
+        fonts-tlwg-loma-otf \
+        fonts-unifont \
+        fonts-wqy-zenhei \
+        libasound2 \
+        libatk-bridge2.0-0 \
+        libatk1.0-0 \
+        libatspi2.0-0 \
+        libavahi-client3 \
+        libcups2 \
+        libdbus-1-3 \
+        libgbm1 \
+        libnspr4 \
+        libnss3 \
+        libwayland-server0 \
+        libxcomposite1 \
+        libxdamage1 \
+        libxi6 \
+        libxkbcommon0 \
+        xfonts-scalable \
+        xvfb && \
       mkdir -p /home/node/.cache/ms-playwright && \
       PLAYWRIGHT_BROWSERS_PATH=/home/node/.cache/ms-playwright \
-      node /app/node_modules/playwright-core/cli.js install --with-deps chromium && \
-      chown -R node:node /home/node/.cache/ms-playwright; \
+      node /app/node_modules/playwright-core/cli.js install chromium && \
+      chown -R node:node /home/node/.cache/ms-playwright && \
+      apt-get clean && \
+      rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*; \
     fi
 
 # Optionally install Docker CLI for sandbox container management.
@@ -272,14 +303,7 @@ LABEL org.opencontainers.image.source="https://github.com/openclaw/openclaw" \
 
 WORKDIR /app
 
-# Install system utilities present in bookworm but missing in bookworm-slim.
-# On the full bookworm image these are already installed (apt-get is a no-op).
-RUN --mount=type=cache,id=openclaw-bookworm-apt-cache,target=/var/cache/apt,sharing=locked \
-    --mount=type=cache,id=openclaw-bookworm-apt-lists,target=/var/lib/apt,sharing=locked \
-    apt-get update && \
-    DEBIAN_FRONTEND=noninteractive apt-get upgrade -y --no-install-recommends && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      procps hostname curl git lsof openssl
+# No apt here — same as secure-runtime-assets: base image already includes common utilities.
 
 RUN chown node:node /app
 
@@ -323,9 +347,7 @@ RUN --mount=type=cache,id=openclaw-bookworm-apt-cache,target=/var/cache/apt,shar
     fi
 
 # Optionally install the gog CLI for Google Workspace skill flows.
-# Build with: docker build --build-arg OPENCLAW_INSTALL_GOG=1 ...
-# Upstream now documents source builds rather than Linux release tarballs,
-# so we compile a matching binary in a dedicated Go build stage.
+# Build gog: OPENCLAW_BUILD_GOG=1. Install: OPENCLAW_INSTALL_GOG=1 (requires a real binary).
 ARG OPENCLAW_INSTALL_GOG=""
 COPY --from=gog-build /out/gog /tmp/gog
 RUN if [ "$OPENCLAW_INSTALL_GOG" = "1" ]; then \
@@ -338,15 +360,40 @@ RUN if [ "$OPENCLAW_INSTALL_GOG" = "1" ]; then \
 # Adds ~300MB but eliminates the 60-90s Playwright install on every container start.
 # Must run after node_modules COPY so playwright-core is available.
 ARG OPENCLAW_INSTALL_BROWSER=""
-RUN --mount=type=cache,id=openclaw-bookworm-apt-cache,target=/var/cache/apt,sharing=locked \
-    --mount=type=cache,id=openclaw-bookworm-apt-lists,target=/var/lib/apt,sharing=locked \
-    if [ "$OPENCLAW_INSTALL_BROWSER" = "1" ]; then \
+RUN if [ "$OPENCLAW_INSTALL_BROWSER" = "1" ]; then \
       apt-get update && \
-      DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends xvfb && \
+      DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        at-spi2-common \
+        fonts-freefont-ttf \
+        fonts-ipafont-gothic \
+        fonts-liberation \
+        fonts-noto-color-emoji \
+        fonts-tlwg-loma-otf \
+        fonts-unifont \
+        fonts-wqy-zenhei \
+        libasound2 \
+        libatk-bridge2.0-0 \
+        libatk1.0-0 \
+        libatspi2.0-0 \
+        libavahi-client3 \
+        libcups2 \
+        libdbus-1-3 \
+        libgbm1 \
+        libnspr4 \
+        libnss3 \
+        libwayland-server0 \
+        libxcomposite1 \
+        libxdamage1 \
+        libxi6 \
+        libxkbcommon0 \
+        xfonts-scalable \
+        xvfb && \
       mkdir -p /home/node/.cache/ms-playwright && \
       PLAYWRIGHT_BROWSERS_PATH=/home/node/.cache/ms-playwright \
-      node /app/node_modules/playwright-core/cli.js install --with-deps chromium && \
-      chown -R node:node /home/node/.cache/ms-playwright; \
+      node /app/node_modules/playwright-core/cli.js install chromium && \
+      chown -R node:node /home/node/.cache/ms-playwright && \
+      apt-get clean && \
+      rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*; \
     fi
 
 # Optionally install Docker CLI for sandbox container management.

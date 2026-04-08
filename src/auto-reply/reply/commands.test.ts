@@ -374,6 +374,26 @@ describe("/approve command", () => {
     );
   });
 
+  it("normalizes wrapped approval ids before submit", async () => {
+    const cfg = {
+      commands: { text: true },
+      channels: { whatsapp: { allowFrom: ["*"] } },
+    } as OpenClawConfig;
+    const params = buildParams("/approve `approval-12345`, allow-once", cfg, { SenderId: "123" });
+
+    callGatewayMock.mockResolvedValue({ ok: true });
+
+    const result = await handleCommands(params);
+    expect(result.shouldContinue).toBe(false);
+    expect(result.reply?.text).toContain("Exec approval allow-once submitted");
+    expect(callGatewayMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: "exec.approval.resolve",
+        params: { id: "approval-12345", decision: "allow-once" },
+      }),
+    );
+  });
+
   it("accepts Telegram command mentions for /approve", async () => {
     const cfg = createTelegramApproveCfg();
     const params = buildParams("/approve@bot abc12345 allow-once", cfg, {
@@ -422,7 +442,7 @@ describe("/approve command", () => {
           SenderId: "123",
         },
         setup: () => callGatewayMock.mockRejectedValue(new Error("unknown or expired approval id")),
-        expectedText: "unknown or expired approval id",
+        expectedText: "latest approval prompt",
         expectGatewayCalls: 1,
       },
       {

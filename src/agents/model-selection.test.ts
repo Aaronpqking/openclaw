@@ -486,6 +486,33 @@ describe("model-selection", () => {
         ref: { provider: "openai", model: "@cf/openai/gpt-oss-20b" },
       });
     });
+
+    it("rejects unknown refs when allowlist is open but catalog does not include the model", () => {
+      const result = resolveAllowedModelRef({
+        cfg: {} as OpenClawConfig,
+        catalog: [{ provider: "openai", id: "gpt-5.4-mini", name: "GPT-5.4 Mini" }],
+        raw: "openai/not-a-real-model",
+        defaultProvider: "openai",
+      });
+
+      expect(result).toEqual({
+        error: "model not configured: openai/not-a-real-model",
+      });
+    });
+
+    it("accepts refs present in catalog when allowlist is open", () => {
+      const result = resolveAllowedModelRef({
+        cfg: {} as OpenClawConfig,
+        catalog: [{ provider: "openai", id: "gpt-5.4", name: "GPT-5.4" }],
+        raw: "openai/gpt-5.4",
+        defaultProvider: "openai",
+      });
+
+      expect(result).toEqual({
+        key: "openai/gpt-5.4",
+        ref: { provider: "openai", model: "gpt-5.4" },
+      });
+    });
   });
 
   describe("resolveModelRefFromString", () => {

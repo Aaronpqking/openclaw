@@ -383,21 +383,24 @@ export function resolveCommandArgMenu(params: {
 
 export function normalizeCommandBody(raw: string, options?: CommandNormalizeOptions): string {
   const trimmed = raw.trim();
-  if (!trimmed.startsWith("/")) {
+  const newline = trimmed.indexOf("\n");
+  const singleLine = newline === -1 ? trimmed : trimmed.slice(0, newline).trim();
+  const prefixedCommandMatch = singleLine.match(
+    /^(?:system:\s*)?\[[^\]\n]+\]\s+(\/[a-z][a-z0-9_-]*(?:\s+.*|:\s*.*)?)$/i,
+  );
+  const commandCandidate = prefixedCommandMatch?.[1]?.trim() || singleLine;
+  if (!commandCandidate.startsWith("/")) {
     return trimmed;
   }
 
-  const newline = trimmed.indexOf("\n");
-  const singleLine = newline === -1 ? trimmed : trimmed.slice(0, newline).trim();
-
-  const colonMatch = singleLine.match(/^\/([^\s:]+)\s*:(.*)$/);
+  const colonMatch = commandCandidate.match(/^\/([^\s:]+)\s*:(.*)$/);
   const normalized = colonMatch
     ? (() => {
         const [, command, rest] = colonMatch;
         const normalizedRest = rest.trimStart();
         return normalizedRest ? `/${command} ${normalizedRest}` : `/${command}`;
       })()
-    : singleLine;
+    : commandCandidate;
 
   const normalizedBotUsername = options?.botUsername?.trim().toLowerCase();
   const mentionMatch = normalizedBotUsername

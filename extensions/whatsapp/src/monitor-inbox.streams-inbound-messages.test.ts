@@ -120,6 +120,66 @@ describe("web monitor inbox", () => {
     await listener.close();
   });
 
+  it("suppresses replayed inbound copies with different provider ids", async () => {
+    const onMessage = vi.fn(async () => {
+      return;
+    });
+
+    const { listener, sock } = await startInboxMonitor(onMessage as InboxOnMessage);
+    const first = buildNotifyMessageUpsert({
+      id: "abc",
+      remoteJid: "999@s.whatsapp.net",
+      text: "ping",
+      timestamp: 1_700_000_000,
+      pushName: "Tester",
+    });
+    const replayWithNewId = buildNotifyMessageUpsert({
+      id: "def",
+      remoteJid: "999@s.whatsapp.net",
+      text: "ping",
+      timestamp: 1_700_000_000,
+      pushName: "Tester",
+    });
+
+    sock.ev.emit("messages.upsert", first);
+    sock.ev.emit("messages.upsert", replayWithNewId);
+    await waitForMessageCalls(onMessage, 1);
+
+    expect(onMessage).toHaveBeenCalledTimes(1);
+
+    await listener.close();
+  });
+
+  it("keeps group peer dedupe scope isolated per participant", async () => {
+    const onMessage = vi.fn(async () => {
+      return;
+    });
+
+    const { listener, sock } = await startInboxMonitor(onMessage as InboxOnMessage);
+    const participantOne = buildNotifyMessageUpsert({
+      id: "abc",
+      remoteJid: "123@g.us",
+      participant: "444@s.whatsapp.net",
+      text: "ping",
+      timestamp: 1_700_000_000,
+    });
+    const participantTwo = buildNotifyMessageUpsert({
+      id: "def",
+      remoteJid: "123@g.us",
+      participant: "555@s.whatsapp.net",
+      text: "ping",
+      timestamp: 1_700_000_000,
+    });
+
+    sock.ev.emit("messages.upsert", participantOne);
+    sock.ev.emit("messages.upsert", participantTwo);
+    await waitForMessageCalls(onMessage, 2);
+
+    expect(onMessage).toHaveBeenCalledTimes(2);
+
+    await listener.close();
+  });
+
   it("resolves LID JIDs using Baileys LID mapping store", async () => {
     const onMessage = vi.fn(async () => {
       return;

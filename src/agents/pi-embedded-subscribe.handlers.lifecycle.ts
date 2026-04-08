@@ -1,4 +1,5 @@
 import { emitAgentEvent } from "../infra/agent-events.js";
+import { createSubsystemLogger } from "../logging/subsystem.js";
 import { createInlineCodeState } from "../markdown/code-spans.js";
 import {
   buildApiErrorObservationFields,
@@ -6,8 +7,12 @@ import {
   sanitizeForConsole,
 } from "./pi-embedded-error-observation.js";
 import { classifyFailoverReason, formatAssistantErrorText } from "./pi-embedded-helpers.js";
+import { consumeRouteAuditSummaryForRun } from "./pi-embedded-subscribe.handlers.tools.js";
 import type { EmbeddedPiSubscribeContext } from "./pi-embedded-subscribe.handlers.types.js";
 import { isAssistantMessage } from "./pi-embedded-utils.js";
+import { finalizeRetrievalTraceForRun } from "./retrieval-trace.js";
+
+const retrievalTraceLog = createSubsystemLogger("agents/retrieval-trace");
 
 export {
   handleAutoCompactionEnd,
@@ -97,6 +102,28 @@ export function handleAgentEnd(ctx: EmbeddedPiSubscribeContext) {
   }
 
   ctx.flushBlockReplyBuffer();
+  // Cleanup one-run trace/audit state once lifecycle reaches terminal phase.
+  const retrievalTrace = finalizeRetrievalTraceForRun(ctx.params.runId);
+  if (retrievalTrace) {
+    const traceData = {
+      phase: "retrieval_trace",
+      ...retrievalTrace,
+    };
+    ctx.log.debug(`retrieval_trace ${JSON.stringify({ run_id: ctx.params.runId, ...traceData })}`);
+    retrievalTraceLog.info(
+      `retrieval_trace ${JSON.stringify({ run_id: ctx.params.runId, ...traceData })}`,
+    );
+    emitAgentEvent({
+      runId: ctx.params.runId,
+      stream: "lifecycle",
+      data: traceData,
+    });
+    void ctx.params.onAgentEvent?.({
+      stream: "lifecycle",
+      data: traceData,
+    });
+  }
+  consumeRouteAuditSummaryForRun(ctx.params.runId);
   // Flush the reply pipeline so the response reaches the channel before
   // compaction wait blocks the run.  This mirrors the pattern used by
   // handleToolExecutionStart and ensures delivery is not held hostage to

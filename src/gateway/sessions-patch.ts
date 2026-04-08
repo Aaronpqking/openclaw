@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { resolveDefaultAgentId } from "../agents/agent-scope.js";
 import type { ModelCatalogEntry } from "../agents/model-catalog.js";
 import {
+  modelKey,
   resolveAllowedModelRef,
   resolveDefaultModelForAgent,
   resolveSubagentConfiguredModelSelection,
@@ -405,6 +406,16 @@ export async function applySessionsPatchToStore(params: {
       });
       if ("error" in resolved) {
         return invalid(resolved.error);
+      }
+      const hasExplicitAllowlist = Object.keys(cfg.agents?.defaults?.models ?? {}).length > 0;
+      if (!hasExplicitAllowlist) {
+        const resolvedKey = modelKey(resolved.ref.provider, resolved.ref.model);
+        const inCatalog = catalog.some(
+          (entry) => modelKey(entry.provider, entry.id) === resolvedKey,
+        );
+        if (!inCatalog) {
+          return invalid(`model not configured: ${resolvedKey}`);
+        }
       }
       const isDefault =
         resolved.ref.provider === resolvedDefault.provider &&

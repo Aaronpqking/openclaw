@@ -74,6 +74,25 @@ export type AgentRunLoopResult =
     }
   | { kind: "final"; payload: ReplyPayload };
 
+const GWORKSPACE_TASK_HINT_RE = /\b(gog|gmail|calendar|drive|inbox|email)\b/i;
+
+export function resolveModelTaskClassPolicy(params: { provider: string; commandBody: string }): {
+  blocked: boolean;
+  taskClass: "heartbeat_lightweight_chatter" | "operational_routing_tool_use_triage" | "general";
+  reason?: string;
+  code?: "unsupported_task_class";
+} {
+  const commandBody = params.commandBody.trim();
+  const isOperational = GWORKSPACE_TASK_HINT_RE.test(commandBody);
+  if (!isOperational) {
+    return { blocked: false, taskClass: "general" };
+  }
+  return {
+    blocked: false,
+    taskClass: "operational_routing_tool_use_triage",
+  };
+}
+
 export async function runAgentTurnWithFallback(params: {
   commandBody: string;
   followupRun: FollowupRun;
@@ -221,6 +240,30 @@ export async function runAgentTurnWithFallback(params: {
         ...resolveModelFallbackOptions(params.followupRun.run),
         runId,
         run: (provider, model, runOptions) => {
+          const taskClassPolicy = resolveModelTaskClassPolicy({
+            provider,
+            commandBody: params.commandBody,
+          });
+          if (taskClassPolicy.blocked) {
+            emitAgentEvent({
+              runId,
+              stream: "lifecycle",
+              data: {
+                phase: "model_policy",
+                requested_model: `${provider}/${model}`,
+                resolved_model: `${provider}/${model}`,
+                task_class: taskClassPolicy.taskClass,
+                model_access_reason: taskClassPolicy.code,
+                surface_policy_reason: taskClassPolicy.reason,
+              },
+            });
+            const policyError = new Error(
+              `[model-policy:${taskClassPolicy.code}] ${taskClassPolicy.reason}`,
+            );
+            (policyError as { code?: string }).code = taskClassPolicy.code;
+            (policyError as { status?: number }).status = 422;
+            throw policyError;
+          }
           // Notify that model selection is complete (including after fallback).
           // This allows responsePrefix template interpolation with the actual model.
           params.opts?.onModelSelected?.({

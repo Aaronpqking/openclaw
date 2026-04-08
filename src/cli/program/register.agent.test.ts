@@ -100,6 +100,28 @@ describe("registerAgentCommands", () => {
     );
   });
 
+  it("forwards explicit provider/model override flags for agent runs", async () => {
+    await runCli([
+      "agent",
+      "--message",
+      "route this",
+      "--provider",
+      "openai",
+      "--model",
+      "gpt-5.4",
+    ]);
+
+    expect(agentCliCommandMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: "route this",
+        provider: "openai",
+        model: "gpt-5.4",
+      }),
+      runtime,
+      { deps: true },
+    );
+  });
+
   it("runs agents add and computes hasFlags based on explicit options", async () => {
     await runCli(["agents", "add", "alpha"]);
     expect(agentsAddCommandMock).toHaveBeenNthCalledWith(

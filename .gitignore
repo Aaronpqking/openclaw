@@ -89,6 +89,8 @@ tmp/
 IDENTITY.md
 USER.md
 .tgz
+.artifacts/
+openclaw-secure-browser-fix*.tgz
 .idea
 
 # local tooling
@@ -134,6 +136,10 @@ ui/src/ui/__screenshots__
 ui/src/ui/views/__screenshots__
 ui/.vitest-attachments
 docs/superpowers
+
+# Local secure-deploy operator artifacts
+deploy/secure/artifacts/
+secure-mvp.env
 
 # Deprecated changelog fragment workflow
 changelog/fragments/

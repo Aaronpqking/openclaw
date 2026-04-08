@@ -5,6 +5,7 @@ import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { Type } from "@sinclair/typebox";
 import { openBoundaryFile, type BoundaryFileOpenResult } from "../infra/boundary-file-read.js";
 import { writeFileWithinRoot } from "../infra/fs-safe.js";
+import { assertGovernanceMutationAllowed } from "../infra/governance-files.js";
 import { PATH_ALIAS_POLICIES, type PathAliasPolicy } from "../infra/path-alias-guards.js";
 import { applyUpdateHunk } from "./apply-patch-update.js";
 import { toRelativeSandboxPath, resolvePathFromInput } from "./path-policy.js";
@@ -234,8 +235,22 @@ function resolvePatchFileOps(options: ApplyPatchOptions): PatchFileOps {
         const buf = await bridge.readFile({ filePath, cwd: root });
         return buf.toString("utf8");
       },
-      writeFile: (filePath, content) => bridge.writeFile({ filePath, cwd: root, data: content }),
-      remove: (filePath) => bridge.remove({ filePath, cwd: root, force: false }),
+      writeFile: async (filePath, content) => {
+        assertGovernanceMutationAllowed({
+          rootDir: root,
+          filePath,
+          operation: "write",
+        });
+        await bridge.writeFile({ filePath, cwd: root, data: content });
+      },
+      remove: async (filePath) => {
+        assertGovernanceMutationAllowed({
+          rootDir: root,
+          filePath,
+          operation: "delete",
+        });
+        await bridge.remove({ filePath, cwd: root, force: false });
+      },
       mkdirp: (dir) => bridge.mkdirp({ filePath: dir, cwd: root }),
     };
   }
@@ -258,6 +273,11 @@ function resolvePatchFileOps(options: ApplyPatchOptions): PatchFileOps {
       }
     },
     writeFile: async (filePath, content) => {
+      assertGovernanceMutationAllowed({
+        rootDir: options.cwd,
+        filePath,
+        operation: "write",
+      });
       if (!workspaceOnly) {
         await fs.writeFile(filePath, content, "utf8");
         return;
@@ -271,6 +291,11 @@ function resolvePatchFileOps(options: ApplyPatchOptions): PatchFileOps {
       });
     },
     remove: async (filePath) => {
+      assertGovernanceMutationAllowed({
+        rootDir: options.cwd,
+        filePath,
+        operation: "delete",
+      });
       if (workspaceOnly) {
         await assertSandboxPath({
           filePath,
@@ -330,15 +355,40 @@ async function resolvePatchPath(
 
   const workspaceOnly = options.workspaceOnly !== false;
   const resolved = workspaceOnly
-    ? (
-        await assertSandboxPath({
+    ? await (async () => {
+        const sandboxPath = await assertSandboxPath({
           filePath,
           cwd: options.cwd,
           root: options.cwd,
           allowFinalSymlinkForUnlink: aliasPolicy.allowFinalSymlinkForUnlink,
           allowFinalHardlinkForUnlink: aliasPolicy.allowFinalHardlinkForUnlink,
-        })
-      ).resolved
+        });
+        if (
+          aliasPolicy.allowFinalSymlinkForUnlink === true ||
+          aliasPolicy.allowFinalHardlinkForUnlink === true
+        ) {
+          return sandboxPath.resolved;
+        }
+        try {
+          // Preserve legitimate in-workspace symlink aliases by patching the verified target
+          // while keeping the lexical workspace root prefix stable for later boundary checks.
+          const [rootReal, targetReal] = await Promise.all([
+            fs.realpath(options.cwd),
+            fs.realpath(sandboxPath.resolved),
+          ]);
+          const relativeTarget = path.relative(rootReal, targetReal);
+          if (
+            !relativeTarget ||
+            relativeTarget.startsWith("..") ||
+            path.isAbsolute(relativeTarget)
+          ) {
+            return sandboxPath.resolved;
+          }
+          return path.resolve(options.cwd, relativeTarget);
+        } catch {
+          return sandboxPath.resolved;
+        }
+      })()
     : resolvePathFromInput(filePath, options.cwd);
   return {
     resolved,

@@ -5,6 +5,7 @@ services:
       dockerfile: Dockerfile
       args:
         OPENCLAW_INSTALL_BROWSER: ${OPENCLAW_INSTALL_BROWSER:-0}
+        OPENCLAW_BUILD_GOG: ${OPENCLAW_BUILD_GOG:-1}
         OPENCLAW_INSTALL_GOG: ${OPENCLAW_INSTALL_GOG:-1}
     image: openclaw:secure-v1_1
     init: true

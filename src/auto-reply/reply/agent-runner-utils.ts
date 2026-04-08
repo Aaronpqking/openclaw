@@ -186,6 +186,7 @@ export function buildEmbeddedRunBaseParams(params: {
     inputProvenance: params.run.inputProvenance,
     taskPacket: params.run.taskPacket,
     senderIsOwner: params.run.senderIsOwner,
+    requireExplicitMessageTarget: params.run.requireExplicitMessageTarget,
     enforceFinalTag: resolveEnforceFinalTag(params.run, params.provider),
     provider: params.provider,
     model: params.model,

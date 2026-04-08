@@ -1,9 +1,12 @@
+import fs from "node:fs";
+import path from "node:path";
 import type { ToolLoopDetectionConfig } from "../config/types.tools.js";
 import type { SessionState } from "../logging/diagnostic-session-state.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { getGlobalHookRunner } from "../plugins/hook-runner-global.js";
 import { createLazyRuntimeSurface } from "../shared/lazy-runtime.js";
 import { isPlainObject } from "../utils.js";
+import { resolveBundledSkillsDir } from "./skills/bundled-dir.js";
 import { normalizeToolName } from "./tool-policy.js";
 import type { AnyAgentTool } from "./tools/common.js";
 
@@ -14,9 +17,110 @@ export type HookContext = {
   sessionId?: string;
   runId?: string;
   loopDetection?: ToolLoopDetectionConfig;
+  routeIntent?: {
+    googleWorkspace?: boolean;
+    browserExplicitlyRequested?: boolean;
+  };
 };
 
 type HookOutcome = { blocked: true; reason: string } | { blocked: false; params: unknown };
+
+function readExecCommand(params: unknown): string {
+  if (!isPlainObject(params)) {
+    return "";
+  }
+  const record = params;
+  const command = record.command;
+  if (typeof command !== "string") {
+    return "";
+  }
+  return command.trim();
+}
+
+function readToolPath(params: unknown): string {
+  if (!isPlainObject(params)) {
+    return "";
+  }
+  const record = params;
+  const pathValue = record.path;
+  if (typeof pathValue !== "string") {
+    return "";
+  }
+  return pathValue.trim();
+}
+
+function isGogExecCommand(command: string): boolean {
+  if (!command) {
+    return false;
+  }
+  const normalized = command.trim();
+  if (!normalized) {
+    return false;
+  }
+  if (normalized.includes("&&")) {
+    const segments = normalized
+      .split("&&")
+      .map((segment) => segment.trim())
+      .filter(Boolean);
+    if (segments.length === 0) {
+      return false;
+    }
+    return segments.every((segment) => isGogExecCommand(segment));
+  }
+  return /^(?:[A-Za-z_][A-Za-z0-9_]*=\S+\s+)*(?:env\s+)?gog(?:\s|$)/i.test(normalized);
+}
+
+function isLikelyShellProbeCommand(command: string): boolean {
+  if (!command) {
+    return false;
+  }
+  const normalized = command.trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  if (normalized.startsWith("gog ")) {
+    return false;
+  }
+  if (normalized.includes("&&")) {
+    const segments = normalized
+      .split("&&")
+      .map((segment) => segment.trim())
+      .filter(Boolean);
+    if (segments.length === 0) {
+      return false;
+    }
+    return segments.every((segment) => isLikelyShellProbeCommand(segment));
+  }
+  return /^(pwd|ls(?:\s|$)|which(?:\s|$)|command\s+-v(?:\s|$)|echo(?:\s|$)|env(?:\s|$)|id(?:\s|$)|whoami(?:\s|$)|uname(?:\s|$)|test(?:\s|$)|cat\s+\/etc\/)/.test(
+    normalized,
+  );
+}
+
+function maybeRemapStaleGogSkillPath(pathValue: string): string | null {
+  if (!pathValue) {
+    return null;
+  }
+  const normalized = pathValue.replaceAll("\\", "/").toLowerCase();
+  if (!normalized.endsWith("/skills/gog/skill.md")) {
+    return null;
+  }
+  if (fs.existsSync(pathValue)) {
+    return null;
+  }
+  const bundledSkillsDir = resolveBundledSkillsDir();
+  if (!bundledSkillsDir) {
+    return null;
+  }
+  const candidate = path.join(bundledSkillsDir, "gog", "SKILL.md");
+  if (!fs.existsSync(candidate)) {
+    return null;
+  }
+  return candidate;
+}
+
+function buildRouteBlockReason(code: string, message: string): string {
+  return `[route:${code}] ${message}`;
+}
 
 const log = createSubsystemLogger("agents/tools");
 const BEFORE_TOOL_CALL_WRAPPED = Symbol("beforeToolCallWrapped");
@@ -93,7 +197,41 @@ export async function runBeforeToolCallHook(args: {
   ctx?: HookContext;
 }): Promise<HookOutcome> {
   const toolName = normalizeToolName(args.toolName || "tool");
-  const params = args.params;
+  let params = args.params;
+  const routeIntent = args.ctx?.routeIntent;
+
+  if (toolName === "read") {
+    const requestedPath = readToolPath(params);
+    const remappedPath = maybeRemapStaleGogSkillPath(requestedPath);
+    if (remappedPath && isPlainObject(params)) {
+      params = { ...params, path: remappedPath };
+    }
+  }
+
+  if (routeIntent?.googleWorkspace) {
+    if (toolName === "browser" && routeIntent.browserExplicitlyRequested !== true) {
+      return {
+        blocked: true,
+        reason: buildRouteBlockReason(
+          "browser_attach_not_required",
+          "Google Workspace tasks must use gog-backed exec first; browser attach is not required.",
+        ),
+      };
+    }
+    if (toolName === "exec") {
+      const command = readExecCommand(params);
+      const normalized = command.toLowerCase();
+      if (normalized && !isGogExecCommand(command)) {
+        const reason = isLikelyShellProbeCommand(normalized)
+          ? "Non-gog shell probe blocked for Google Workspace task; run a gog command directly."
+          : "Non-gog exec blocked for Google Workspace task; use gog-backed exec route first.";
+        return {
+          blocked: true,
+          reason: buildRouteBlockReason("exec_route_not_applicable", reason),
+        };
+      }
+    }
+  }
 
   if (args.ctx?.sessionKey) {
     const { getDiagnosticSessionState, logToolLoopAction, detectToolCallLoop, recordToolCall } =
@@ -147,7 +285,7 @@ export async function runBeforeToolCallHook(args: {
 
   const hookRunner = getGlobalHookRunner();
   if (!hookRunner?.hasHooks("before_tool_call")) {
-    return { blocked: false, params: args.params };
+    return { blocked: false, params };
   }
 
   try {

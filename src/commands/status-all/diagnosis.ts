@@ -36,6 +36,21 @@ type SkillStatusLike = {
   skills: Array<{ eligible: boolean; missing: Record<string, unknown[]> }>;
 };
 
+type GoogleWorkspaceServiceReadinessLike = {
+  service: "gmail" | "calendar" | "drive";
+  state: string;
+  message: string;
+  missingPrerequisite: string | null;
+  deltaCount: number | null;
+};
+
+type GoogleWorkspaceReadinessLike = {
+  state: string;
+  message: string;
+  account: string | null;
+  services: Record<"gmail" | "calendar" | "drive", GoogleWorkspaceServiceReadinessLike>;
+};
+
 type ChannelIssueLike = {
   channel: string;
   accountId: string;
@@ -63,6 +78,7 @@ export async function appendStatusAllDiagnosis(params: {
   tailscale: TailscaleStatusLike;
   tailscaleHttpsUrl: string | null;
   skillStatus: SkillStatusLike | null;
+  googleWorkspace?: GoogleWorkspaceReadinessLike | null;
   pluginCompatibility: PluginCompatibilityNotice[];
   channelsStatus: unknown;
   channelIssues: ChannelIssueLike[];
@@ -179,6 +195,30 @@ export async function appendStatusAllDiagnosis(params: {
       `Skills: ${eligible} eligible · ${missing} missing · ${params.skillStatus.workspaceDir}`,
       missing === 0 ? "ok" : "warn",
     );
+  }
+
+  if (params.googleWorkspace) {
+    const state = params.googleWorkspace.state;
+    const severity =
+      state === "configured_and_verified"
+        ? "ok"
+        : state === "provider_api_error" || state === "unknown_internal_error"
+          ? "fail"
+          : "warn";
+    emitCheck(
+      `Google Workspace: ${state}${params.googleWorkspace.account ? ` · ${params.googleWorkspace.account}` : ""}`,
+      severity,
+    );
+    lines.push(`  ${muted(params.googleWorkspace.message)}`);
+    for (const key of ["gmail", "calendar", "drive"] as const) {
+      const service = params.googleWorkspace.services[key];
+      const deltaLabel =
+        typeof service.deltaCount === "number" ? ` · delta=${service.deltaCount}` : "";
+      lines.push(`  - ${key}: ${service.state}${deltaLabel} · ${service.message}`);
+      if (service.missingPrerequisite) {
+        lines.push(`    ${muted(`next: ${service.missingPrerequisite}`)}`);
+      }
+    }
   }
 
   emitCheck(

@@ -277,6 +277,11 @@ export function createOpenClawCodingTools(options?: {
   onYield?: (message: string) => Promise<void> | void;
   /** Control-plane task packet for exec approval (Eleanor Lite). */
   taskPacket?: TaskPacket;
+  /** Optional per-run routing hints derived from the user prompt. */
+  routeIntent?: {
+    googleWorkspace?: boolean;
+    browserExplicitlyRequested?: boolean;
+  };
 }): AnyAgentTool[] {
   const execToolName = "exec";
   const sandbox = options?.sandbox?.enabled ? options.sandbox : undefined;
@@ -618,6 +623,7 @@ export function createOpenClawCodingTools(options?: {
       sessionId: options?.sessionId,
       runId: options?.runId,
       loopDetection: resolveToolLoopDetectionConfig({ cfg: options?.config, agentId }),
+      routeIntent: options?.routeIntent,
     }),
   );
   const withAbort = options?.abortSignal

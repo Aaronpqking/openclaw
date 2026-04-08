@@ -292,7 +292,9 @@ function handleTerminalChatEvent(
   const runId = payload?.runId;
   if (runId && host.refreshSessionsAfterChat.has(runId)) {
     host.refreshSessionsAfterChat.delete(runId);
-    if (state === "final") {
+    // Refresh on any terminal state: /reset and /new can fail during the greeting run
+    // (rate limits, etc.); waiting only for "final" left stale context meters (#1523-style).
+    if (state === "final" || state === "error" || state === "aborted") {
       void loadSessions(host as unknown as OpenClawApp, {
         activeMinutes: CHAT_SESSIONS_ACTIVE_MINUTES,
       });

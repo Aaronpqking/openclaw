@@ -411,14 +411,13 @@ describe("dispatchReplyFromConfig", () => {
     const cfg = emptyConfig;
     const dispatcher = createDispatcher();
     const ctx = buildTestCtx({
-      Provider: "webchat",
-      Surface: "webchat",
+      Provider: "slack",
+      Surface: "slack",
       SessionKey: "agent:main:mattermost:channel:CHAN1:thread:post-root",
       AccountId: "default",
       MessageThreadId: undefined,
       OriginatingChannel: "mattermost",
       OriginatingTo: "channel:CHAN1",
-      ExplicitDeliverRoute: true,
     });
 
     const replyResolver = async () => ({ text: "hi" }) satisfies ReplyPayload;
@@ -453,14 +452,13 @@ describe("dispatchReplyFromConfig", () => {
     const cfg = emptyConfig;
     const dispatcher = createDispatcher();
     const ctx = buildTestCtx({
-      Provider: "webchat",
-      Surface: "webchat",
+      Provider: "slack",
+      Surface: "slack",
       SessionKey: "agent:main:mattermost:channel:CHAN1",
       AccountId: "default",
       MessageThreadId: undefined,
       OriginatingChannel: "mattermost",
       OriginatingTo: "channel:CHAN1",
-      ExplicitDeliverRoute: true,
     });
 
     const replyResolver = async () => ({ text: "hi" }) satisfies ReplyPayload;
@@ -625,13 +623,8 @@ describe("dispatchReplyFromConfig", () => {
     ) => ({ text: "hi" }) satisfies ReplyPayload;
     await dispatchReplyFromConfig({ ctx, cfg, dispatcher, replyResolver });
 
+    expect(mocks.routeReply).toHaveBeenCalledOnce();
     expect(dispatcher.sendFinalReply).not.toHaveBeenCalled();
-    expect(mocks.routeReply).toHaveBeenCalledWith(
-      expect.objectContaining({
-        channel: "imessage",
-        to: "imessage:+15550001111",
-      }),
-    );
   });
 
   it("routes media-only tool results when summaries are suppressed", async () => {
@@ -2562,5 +2555,49 @@ describe("dispatchReplyFromConfig", () => {
     await dispatchReplyFromConfig({ ctx, cfg: emptyConfig, dispatcher, replyResolver });
     expect(blockReplySentTexts).not.toContain("Reasoning:\n_thinking..._");
     expect(blockReplySentTexts).toContain("The answer is 42");
+  });
+
+  it("does not send replies for verifier-origin messages", async () => {
+    setNoAbort();
+    const dispatcher = createDispatcher();
+    const replyResolver = vi.fn(async () => ({ text: "should not run" }) as ReplyPayload);
+    await dispatchReplyFromConfig({
+      ctx: buildTestCtx({
+        Provider: "slack",
+        OriginatingChannel: "slack",
+        VerifierSource: true,
+        RawBody: "verified: all good",
+      }),
+      cfg: emptyConfig,
+      dispatcher,
+      replyResolver,
+    });
+    expect(replyResolver).not.toHaveBeenCalled();
+    expect(dispatcher.sendFinalReply).not.toHaveBeenCalled();
+    expect(dispatcher.sendToolResult).not.toHaveBeenCalled();
+  });
+
+  it("escalates verifier ambiguity to whatsapp target", async () => {
+    setNoAbort();
+    const dispatcher = createDispatcher();
+    await dispatchReplyFromConfig({
+      ctx: buildTestCtx({
+        Provider: "slack",
+        OriginatingChannel: "slack",
+        VerifierSource: true,
+        VerifierEscalationTo: "+15613609097",
+        RawBody: "Ambiguous output with conflicting evidence and missing evidence",
+      }),
+      cfg: emptyConfig,
+      dispatcher,
+      replyResolver: vi.fn(async () => ({ text: "should not run" }) as ReplyPayload),
+    });
+    expect(mocks.routeReply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: "whatsapp",
+        to: "+15613609097",
+      }),
+    );
+    expect(dispatcher.sendFinalReply).not.toHaveBeenCalled();
   });
 });

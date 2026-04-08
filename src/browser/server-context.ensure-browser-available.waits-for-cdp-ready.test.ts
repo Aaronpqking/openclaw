@@ -66,7 +66,7 @@ function setupEnsureBrowserAvailableHarness() {
   const ctx = createBrowserRouteContext({ getState: () => state });
   const profile = ctx.forProfile("openclaw");
 
-  return { launchOpenClawChrome, stopOpenClawChrome, isChromeCdpReady, profile };
+  return { launchOpenClawChrome, stopOpenClawChrome, isChromeReachable, isChromeCdpReady, profile };
 }
 
 afterEach(() => {
@@ -76,6 +76,32 @@ afterEach(() => {
 });
 
 describe("browser server-context ensureBrowserAvailable", () => {
+  it("reuses a healthy loopback CDP session even when browser SSRF policy blocks private network", async () => {
+    const { launchOpenClawChrome, isChromeReachable, isChromeCdpReady, profile } =
+      setupEnsureBrowserAvailableHarness();
+    isChromeReachable.mockResolvedValue(true);
+    isChromeCdpReady.mockResolvedValue(true);
+
+    await expect(profile.ensureBrowserAvailable()).resolves.toBeUndefined();
+
+    expect(launchOpenClawChrome).not.toHaveBeenCalled();
+    expect(isChromeReachable).toHaveBeenCalledWith("http://127.0.0.1:18800", 300, undefined);
+    expect(isChromeCdpReady).toHaveBeenCalledWith("http://127.0.0.1:18800", 300, 600, undefined);
+  });
+
+  it("reports a non-owned stale port occupant instead of relaunching on loopback", async () => {
+    const { launchOpenClawChrome, isChromeReachable, isChromeCdpReady, profile } =
+      setupEnsureBrowserAvailableHarness();
+    isChromeReachable.mockResolvedValue(true);
+    isChromeCdpReady.mockResolvedValue(false);
+
+    await expect(profile.ensureBrowserAvailable()).rejects.toThrow("not by openclaw");
+
+    expect(launchOpenClawChrome).not.toHaveBeenCalled();
+    expect(isChromeReachable).toHaveBeenCalledWith("http://127.0.0.1:18800", 300, undefined);
+    expect(isChromeCdpReady).toHaveBeenCalledWith("http://127.0.0.1:18800", 300, 600, undefined);
+  });
+
   it("waits for CDP readiness after launching to avoid follow-up PortInUseError races (#21149)", async () => {
     const { launchOpenClawChrome, stopOpenClawChrome, isChromeCdpReady, profile } =
       setupEnsureBrowserAvailableHarness();

@@ -75,6 +75,10 @@ export async function resolveDeliveryTarget(
   if (!preliminary.channel) {
     if (preliminary.lastChannel) {
       fallbackChannel = preliminary.lastChannel;
+    } else if (!explicitTo) {
+      channelResolutionError = new Error(
+        "No associated delivery recipient resolved. Set delivery.to (and optionally delivery.channel), or reuse a session with a previous channel and recipient.",
+      );
     } else {
       try {
         const selection = await resolveMessageChannelSelection({ cfg });

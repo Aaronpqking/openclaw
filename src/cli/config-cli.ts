@@ -1097,7 +1097,13 @@ export async function runConfigSet(opts: {
       return;
     }
 
-    await writeConfigFile(next);
+    await writeConfigFile(next, {
+      protectedMutation: {
+        source: "cli.config.set",
+        actor: "local-cli",
+        approved: false,
+      },
+    });
     if (removedGatewayAuthPaths.length > 0) {
       runtime.log(
         info(
@@ -1175,7 +1181,14 @@ export async function runConfigUnset(opts: { path: string; runtime?: RuntimeEnv 
       runtime.exit(1);
       return;
     }
-    await writeConfigFile(next, { unsetPaths: [parsedPath] });
+    await writeConfigFile(next, {
+      unsetPaths: [parsedPath],
+      protectedMutation: {
+        source: "cli.config.unset",
+        actor: "local-cli",
+        approved: false,
+      },
+    });
     runtime.log(info(`Removed ${opts.path}. Restart the gateway to apply.`));
   } catch (err) {
     runtime.error(danger(String(err)));

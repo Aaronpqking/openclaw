@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { resolveIdentityNamePrefix } from "openclaw/plugin-sdk/agent-runtime";
 import {
   resolveInboundSessionEnvelopeContext,
@@ -9,6 +10,7 @@ import { shouldComputeCommandAuthorized } from "openclaw/plugin-sdk/command-auth
 import type { loadConfig } from "openclaw/plugin-sdk/config-runtime";
 import { resolveMarkdownTableMode } from "openclaw/plugin-sdk/config-runtime";
 import { recordSessionMetaFromInbound } from "openclaw/plugin-sdk/config-runtime";
+import { createDedupeCache } from "openclaw/plugin-sdk/infra-runtime";
 import { getAgentScopedMediaLocalRoots } from "openclaw/plugin-sdk/media-runtime";
 import {
   buildHistoryContextFromEntries,
@@ -51,6 +53,37 @@ export type GroupHistoryEntry = {
   id?: string;
   senderJid?: string;
 };
+
+const OUTBOUND_REPLY_DEDUPE_TTL_MS = 90_000;
+const OUTBOUND_REPLY_DEDUPE_MAX = 4000;
+
+const recentOutboundReplys = createDedupeCache({
+  ttlMs: OUTBOUND_REPLY_DEDUPE_TTL_MS,
+  maxSize: OUTBOUND_REPLY_DEDUPE_MAX,
+});
+
+function buildReplyFingerprint(payload: ReplyPayload): string {
+  const sendable = resolveSendableOutboundReplyParts(payload);
+  const hashInput = JSON.stringify({
+    text: sendable.trimmedText,
+    mediaUrls: sendable.mediaUrls,
+    replyToId: payload.replyToId ?? null,
+  });
+  return createHash("sha256").update(hashInput).digest("hex").slice(0, 16);
+}
+
+function buildOutboundReplyDedupeKey(params: {
+  sessionKey: string;
+  inboundMessageId?: string;
+  replyFingerprint: string;
+}): string | null {
+  const inboundMessageId =
+    typeof params.inboundMessageId === "string" ? params.inboundMessageId.trim() : "";
+  if (!inboundMessageId) {
+    return null;
+  }
+  return `${params.sessionKey}:${inboundMessageId}:${params.replyFingerprint}`;
+}
 
 async function resolveWhatsAppCommandAuthorized(params: {
   cfg: ReturnType<typeof loadConfig>;
@@ -268,6 +301,7 @@ export async function processMessage(params: {
   const mediaLocalRoots = getAgentScopedMediaLocalRoots(params.cfg, params.route.agentId);
   let didLogHeartbeatStrip = false;
   let didSendReply = false;
+  let finalReplyEmitCount = 0;
   const commandAuthorized = shouldComputeCommandAuthorized(params.msg.body, params.cfg)
     ? await resolveWhatsAppCommandAuthorized({ cfg: params.cfg, msg: params.msg })
     : undefined;
@@ -411,6 +445,20 @@ export async function processMessage(params: {
           // web UI only; sending them here leaks chain-of-thought to end users.
           return;
         }
+        finalReplyEmitCount += 1;
+        const replyFingerprint = buildReplyFingerprint(payload);
+        const dedupeKey = buildOutboundReplyDedupeKey({
+          sessionKey: params.route.sessionKey,
+          inboundMessageId: params.msg.id,
+          replyFingerprint,
+        });
+        const duplicateEmission = dedupeKey ? recentOutboundReplys.check(dedupeKey) : false;
+        if (duplicateEmission) {
+          whatsappOutboundLog.warn(
+            `Suppressed duplicate auto-reply to ${conversationId} (session=${params.route.sessionKey}, messageId=${params.msg.id ?? "none"}, emit=${finalReplyEmitCount}, fp=${replyFingerprint})`,
+          );
+          return;
+        }
         await deliverWebReply({
           replyResult: payload,
           msg: params.msg,
@@ -423,6 +471,9 @@ export async function processMessage(params: {
           skipLog: false,
           tableMode,
         });
+        whatsappOutboundLog.info(
+          `Auto-reply emit ${finalReplyEmitCount} to ${conversationId} (session=${params.route.sessionKey}, messageId=${params.msg.id ?? "none"}, fp=${replyFingerprint})`,
+        );
         didSendReply = true;
         const shouldLog = payload.text ? true : undefined;
         params.rememberSentText(payload.text, {

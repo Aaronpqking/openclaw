@@ -1,17 +1,29 @@
 import type { AgentEvent } from "@mariozechner/pi-agent-core";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import * as agentEvents from "../infra/agent-events.js";
 import type { MessagingToolSend } from "./pi-embedded-messaging.js";
 import {
+  consumeRouteAuditSummaryForRun,
   handleToolExecutionEnd,
   handleToolExecutionStart,
+  peekRouteAuditSummaryForRun,
 } from "./pi-embedded-subscribe.handlers.tools.js";
 import type {
   ToolCallSummary,
   ToolHandlerContext,
 } from "./pi-embedded-subscribe.handlers.types.js";
+import { initializeRetrievalTraceForRun, peekRetrievalTraceForRun } from "./retrieval-trace.js";
 
 type ToolExecutionStartEvent = Extract<AgentEvent, { type: "tool_execution_start" }>;
 type ToolExecutionEndEvent = Extract<AgentEvent, { type: "tool_execution_end" }>;
+
+const emitAgentEventSpy = vi
+  .spyOn(agentEvents, "emitAgentEvent")
+  .mockImplementation(() => undefined);
+
+beforeEach(() => {
+  emitAgentEventSpy.mockClear();
+});
 
 function createTestContext(): {
   ctx: ToolHandlerContext;
@@ -176,6 +188,93 @@ describe("handleToolExecutionEnd cron.add commitment tracking", () => {
   });
 });
 
+describe("handleToolExecutionEnd memory retrieval trace tracking", () => {
+  it("marks current daily memory when read tool accesses memory/YYYY-MM-DD.md", async () => {
+    const { ctx } = createTestContext();
+    initializeRetrievalTraceForRun("run-test", {
+      prompt: "recall todays marker",
+      requestedModel: "openai/gpt-5.4-mini",
+      resolvedModel: "openai/gpt-5.4-mini",
+    });
+
+    await handleToolExecutionStart(
+      ctx as never,
+      {
+        type: "tool_execution_start",
+        toolName: "read",
+        toolCallId: "tool-read-memory",
+        args: { path: "/home/node/.openclaw/workspace/memory/2026-04-08.md" },
+      } as never,
+    );
+
+    await handleToolExecutionEnd(
+      ctx as never,
+      {
+        type: "tool_execution_end",
+        toolName: "read",
+        toolCallId: "tool-read-memory",
+        isError: false,
+        result: {
+          content: [{ type: "text", text: "ok" }],
+        },
+      } as never,
+    );
+
+    expect(peekRouteAuditSummaryForRun("run-test")).toMatchObject({
+      task_completed_verified: false,
+    });
+    expect(peekRetrievalTraceForRun("run-test")).toMatchObject({
+      selected_layer: "current_daily_memory",
+      escalated_to_live_source: false,
+    });
+  });
+
+  it("marks current daily memory when memory_search returns a current-day result", async () => {
+    const { ctx } = createTestContext();
+    initializeRetrievalTraceForRun("run-test", {
+      prompt: "What memory proof token was saved today?",
+      requestedModel: "openai/gpt-5.4-mini",
+      resolvedModel: "openai/gpt-5.4-mini",
+    });
+
+    await handleToolExecutionStart(
+      ctx as never,
+      {
+        type: "tool_execution_start",
+        toolName: "memory_search",
+        toolCallId: "tool-memory-search",
+        args: { query: "What memory proof token was saved today?" },
+      } as never,
+    );
+
+    await handleToolExecutionEnd(
+      ctx as never,
+      {
+        type: "tool_execution_end",
+        toolName: "memory_search",
+        toolCallId: "tool-memory-search",
+        isError: false,
+        result: {
+          details: {
+            results: [
+              {
+                path: "memory/2026-04-08.md",
+                snippet: "## Memory proof\n- token: MEMPROOF-2026-04-08-0406Z",
+              },
+            ],
+          },
+        },
+      } as never,
+    );
+
+    expect(peekRetrievalTraceForRun("run-test")).toMatchObject({
+      selected_layer: "current_daily_memory",
+      escalated_to_live_source: false,
+      freshness_required: false,
+    });
+  });
+});
+
 describe("handleToolExecutionEnd exec approval prompts", () => {
   it("emits a deterministic approval payload and marks assistant output suppressed", async () => {
     const { ctx } = createTestContext();
@@ -206,7 +305,9 @@ describe("handleToolExecutionEnd exec approval prompts", () => {
 
     expect(onToolResult).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: expect.stringContaining("```txt\n/approve 12345678 allow-once\n```"),
+        text: expect.stringContaining(
+          "```txt\n/approve 12345678-1234-1234-1234-123456789012 allow-once\n```",
+        ),
         channelData: {
           execApproval: {
             approvalId: "12345678-1234-1234-1234-123456789012",
@@ -328,6 +429,213 @@ describe("handleToolExecutionEnd exec approval prompts", () => {
     );
 
     expect(ctx.state.deterministicApprovalPromptSent).toBe(false);
+  });
+});
+
+describe("route audit telemetry", () => {
+  it("emits model and verification fields for gog route selection", async () => {
+    const { ctx } = createTestContext();
+    ctx.params.runId = "run-route-gog";
+    initializeRetrievalTraceForRun("run-route-gog", {
+      prompt: "check inbox updates",
+      requestedModel: "openai/gpt-5.4-mini",
+      resolvedModel: "openai/gpt-5.4-mini",
+    });
+
+    await handleToolExecutionStart(
+      ctx as never,
+      {
+        type: "tool_execution_start",
+        toolName: "exec",
+        toolCallId: "tool-gog-start",
+        args: { command: "gog gmail search newer_than:1d --max 5" },
+      } as never,
+    );
+    await handleToolExecutionEnd(
+      ctx as never,
+      {
+        type: "tool_execution_end",
+        toolName: "exec",
+        toolCallId: "tool-gog-start",
+        isError: false,
+        result: { ok: true },
+      } as never,
+    );
+
+    const lifecycleEvents = emitAgentEventSpy.mock.calls
+      .map((call) => call[0])
+      .filter((evt) => evt?.stream === "lifecycle")
+      .map((evt) => evt.data);
+    const selected = lifecycleEvents.find((evt) => evt.reasonCode === "gog_exec_route_selected");
+    const verified = lifecycleEvents.find((evt) => evt.reasonCode === "task_completed_verified");
+
+    expect(selected).toMatchObject({
+      phase: "route_audit",
+      requested_model: "openai/gpt-5.4-mini",
+      resolved_model: "openai/gpt-5.4-mini",
+      gog_attempted: true,
+    });
+    expect(verified).toMatchObject({
+      phase: "route_audit",
+      final_status: "verified_success",
+      verification_status: "verified",
+    });
+  });
+
+  it("marks shell_probe_attempted when non-gog probe is blocked", async () => {
+    const { ctx } = createTestContext();
+    ctx.params.runId = "run-route-probe";
+    initializeRetrievalTraceForRun("run-route-probe", {
+      prompt: "check gmail inbox",
+      requestedModel: "openai/gpt-5.4-mini",
+      resolvedModel: "openai/gpt-5.4-mini",
+    });
+
+    await handleToolExecutionEnd(
+      ctx as never,
+      {
+        type: "tool_execution_end",
+        toolName: "exec",
+        toolCallId: "tool-probe-blocked",
+        isError: true,
+        result: {
+          error:
+            "[route:exec_route_not_applicable] Non-gog shell probe blocked for Google Workspace task.",
+        },
+      } as never,
+    );
+
+    const lifecycleEvents = emitAgentEventSpy.mock.calls
+      .map((call) => call[0])
+      .filter((evt) => evt?.stream === "lifecycle")
+      .map((evt) => evt.data);
+    expect(lifecycleEvents).toContainEqual(
+      expect.objectContaining({
+        phase: "route_audit",
+        reasonCode: "exec_route_not_applicable",
+        shell_probe_attempted: true,
+        final_status: "blocked_non_gog_probe",
+      }),
+    );
+  });
+
+  it("emits route_fallback_used when browser route fails before gog succeeds", async () => {
+    const { ctx } = createTestContext();
+    ctx.params.runId = "run-route-browser-fallback";
+    initializeRetrievalTraceForRun("run-route-browser-fallback", {
+      prompt: "check gmail updates",
+      requestedModel: "openai/gpt-5.4-mini",
+      resolvedModel: "openai/gpt-5.4-mini",
+    });
+
+    await handleToolExecutionEnd(
+      ctx as never,
+      {
+        type: "tool_execution_end",
+        toolName: "browser",
+        toolCallId: "tool-browser-fail",
+        isError: true,
+        result: { error: "browser attach failed: gateway noVNC unavailable" },
+      } as never,
+    );
+    await handleToolExecutionStart(
+      ctx as never,
+      {
+        type: "tool_execution_start",
+        toolName: "exec",
+        toolCallId: "tool-gog-after-browser",
+        args: { command: "gog gmail search newer_than:1d --max 5" },
+      } as never,
+    );
+
+    const lifecycleEvents = emitAgentEventSpy.mock.calls
+      .map((call) => call[0])
+      .filter((evt) => evt?.stream === "lifecycle")
+      .map((evt) => evt.data);
+    expect(lifecycleEvents).toContainEqual(
+      expect.objectContaining({
+        phase: "route_audit",
+        reasonCode: "route_fallback_used",
+        route_chosen: "gog_exec",
+        final_status: "recovered_after_block",
+      }),
+    );
+  });
+
+  it("exposes task_completed_verified via route audit summary consumption", async () => {
+    const { ctx } = createTestContext();
+    ctx.params.runId = "run-route-summary";
+    initializeRetrievalTraceForRun("run-route-summary", {
+      prompt: "check gmail updates",
+      requestedModel: "openai/gpt-5.4",
+      resolvedModel: "openai/gpt-5.4",
+    });
+
+    await handleToolExecutionStart(
+      ctx as never,
+      {
+        type: "tool_execution_start",
+        toolName: "exec",
+        toolCallId: "tool-summary-start",
+        args: { command: "gog gmail search newer_than:1d --max 1" },
+      } as never,
+    );
+    await handleToolExecutionEnd(
+      ctx as never,
+      {
+        type: "tool_execution_end",
+        toolName: "exec",
+        toolCallId: "tool-summary-start",
+        isError: false,
+        result: { ok: true },
+      } as never,
+    );
+
+    expect(consumeRouteAuditSummaryForRun("run-route-summary")).toMatchObject({
+      gog_attempted: true,
+      task_completed_verified: true,
+    });
+    expect(consumeRouteAuditSummaryForRun("run-route-summary")).toBeNull();
+  });
+
+  it("peeks route audit summary without consuming it", async () => {
+    const { ctx } = createTestContext();
+    ctx.params.runId = "run-route-peek";
+    initializeRetrievalTraceForRun("run-route-peek", {
+      prompt: "check gmail updates",
+      requestedModel: "openai/gpt-5.4-mini",
+      resolvedModel: "openai/gpt-5.4-mini",
+    });
+
+    await handleToolExecutionStart(
+      ctx as never,
+      {
+        type: "tool_execution_start",
+        toolName: "exec",
+        toolCallId: "tool-peek-start",
+        args: { command: "gog gmail search newer_than:1d --max 1" },
+      } as never,
+    );
+    await handleToolExecutionEnd(
+      ctx as never,
+      {
+        type: "tool_execution_end",
+        toolName: "exec",
+        toolCallId: "tool-peek-start",
+        isError: false,
+        result: { ok: true },
+      } as never,
+    );
+
+    expect(peekRouteAuditSummaryForRun("run-route-peek")).toMatchObject({
+      gog_attempted: true,
+      task_completed_verified: true,
+    });
+    expect(consumeRouteAuditSummaryForRun("run-route-peek")).toMatchObject({
+      gog_attempted: true,
+      task_completed_verified: true,
+    });
+    expect(peekRouteAuditSummaryForRun("run-route-peek")).toBeNull();
   });
 });
 

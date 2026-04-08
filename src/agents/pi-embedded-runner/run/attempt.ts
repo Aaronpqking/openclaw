@@ -78,6 +78,7 @@ import { createPreparedEmbeddedPiSettingsManager } from "../../pi-project-settin
 import { applyPiAutoCompactionGuard } from "../../pi-settings.js";
 import { toClientToolDefinitions } from "../../pi-tool-definition-adapter.js";
 import { createOpenClawCodingTools, resolveToolLoopDetectionConfig } from "../../pi-tools.js";
+import { initializeRetrievalTraceForRun } from "../../retrieval-trace.js";
 import { resolveSandboxContext } from "../../sandbox.js";
 import { resolveSandboxRuntimeStatus } from "../../sandbox/runtime-status.js";
 import { repairSessionFileIfNeeded } from "../../session-file-repair.js";
@@ -418,6 +419,86 @@ export function shouldInjectOllamaCompatNumCtx(params: {
     config: params.config,
     providerId: params.providerId,
   });
+}
+
+export function resolveRouteIntentFromPrompt(prompt: string | undefined): {
+  googleWorkspace?: boolean;
+  browserExplicitlyRequested?: boolean;
+} {
+  const normalized = prompt?.trim().toLowerCase() ?? "";
+  if (!normalized) {
+    return {};
+  }
+  const googleWorkspace =
+    /\b(gog|gmail|google workspace|mailbox|inbox|calendar|drive|email)\b/.test(normalized);
+  const browserExplicitlyRequested = /\b(browser|open gmail|attach browser|devtools)\b/.test(
+    normalized,
+  );
+  return {
+    googleWorkspace,
+    browserExplicitlyRequested,
+  };
+}
+
+export function buildRouteIntentSystemPromptAddition(params: {
+  routeIntent?: {
+    googleWorkspace?: boolean;
+    browserExplicitlyRequested?: boolean;
+  };
+}): string | undefined {
+  if (!params.routeIntent?.googleWorkspace) {
+    return undefined;
+  }
+  const lines = [
+    "Routing policy for Google Workspace tasks:",
+    "- First route must be gog-backed exec in authenticated runtime context.",
+    "- Do not call read/memory/browser tools before the first gog-backed exec call.",
+    "- Never run non-gog shell probes (pwd/ls/find/which) for these tasks.",
+    "- Use browser only when explicitly requested by the user.",
+    "- Never use --no-input for gog auth repair.",
+    "- On headless macOS, prefer `gog auth keyring file` over auto/keychain and require `GOG_KEYRING_PASSWORD`.",
+    "- Prefer gog remote auth repair (`gog auth add ... --remote --step 1/2 --force-consent`) for revoked Workspace tokens on headless hosts.",
+    "- Run `gog auth add` on the same host/environment as the gateway's working `gog` token store; laptop-only re-auth does not fix `invalid_grant` on a remote gateway.",
+    "- Remote OAuth: after step 1, pass the full browser callback URL to step 2 (not a placeholder). On `manual auth state mismatch`, restart at step 1 with a fresh consent.",
+    "- Do not describe auth as complete until `gog auth list --check` passes.",
+    "- If auth still fails, report exact stderr and `gog --version`.",
+    "- If live-source verification is unavailable, state that explicitly and avoid confirmed current-state claims.",
+    "- Do not claim task completion unless task_completed_verified=true.",
+  ];
+  return lines.join("\n");
+}
+
+export function applyRouteIntentToolScoping<T extends { name?: string }>(params: {
+  tools: T[];
+  routeIntent?: {
+    googleWorkspace?: boolean;
+    browserExplicitlyRequested?: boolean;
+  };
+}): T[] {
+  if (!params.routeIntent?.googleWorkspace) {
+    return params.tools;
+  }
+  const execOnly = params.tools.filter((tool) => normalizeToolName(tool.name ?? "") === "exec");
+  return execOnly.length > 0 ? execOnly : params.tools;
+}
+
+function buildModelLabel(provider: string | undefined, modelId: string | undefined): string {
+  const providerValue = provider?.trim() ?? "";
+  const modelValue = modelId?.trim() ?? "";
+  if (!providerValue && !modelValue) {
+    return "unknown";
+  }
+  if (!providerValue) {
+    return modelValue;
+  }
+  if (!modelValue) {
+    return providerValue;
+  }
+  const providerPrefix = `${providerValue.toLowerCase()}/`;
+  if (modelValue.toLowerCase().startsWith(providerPrefix)) {
+    return modelValue;
+  }
+  return `${providerValue}/${modelValue}`;
 }
 
 export function wrapOllamaCompatNumCtx(baseFn: StreamFn | undefined, numCtx: number): StreamFn {
@@ -1733,6 +1814,22 @@ export async function runEmbeddedAttempt(
     let yieldAbortSettled: Promise<void> | null = null;
     // Check if the model supports native image input
     const modelHasVision = params.model.input?.includes("image") ?? false;
+    const routeIntent = resolveRouteIntentFromPrompt(params.prompt);
+    const routePolicyPromptAddition = buildRouteIntentSystemPromptAddition({
+      routeIntent,
+    });
+    const effectiveExtraSystemPrompt = [
+      params.extraSystemPrompt?.trim(),
+      routePolicyPromptAddition?.trim(),
+    ]
+      .filter((line): line is string => Boolean(line))
+      .join("\n\n");
+    const resolvedModelLabel = buildModelLabel(params.provider, params.modelId);
+    initializeRetrievalTraceForRun(params.runId, {
+      prompt: params.prompt,
+      requestedModel: resolvedModelLabel,
+      resolvedModel: resolvedModelLabel,
+    });
     const toolsRaw = params.disableTools
       ? []
       : createOpenClawCodingTools({
@@ -1789,10 +1886,15 @@ export async function runEmbeddedAttempt(
             abortSessionForYield?.();
           },
           taskPacket: params.taskPacket,
+          routeIntent,
         });
     const toolsEnabled = supportsModelTools(params.model);
-    const tools = sanitizeToolsForGoogle({
+    const routeScopedTools = applyRouteIntentToolScoping({
       tools: toolsEnabled ? toolsRaw : [],
+      routeIntent,
+    });
+    const tools = sanitizeToolsForGoogle({
+      tools: routeScopedTools,
       provider: params.provider,
     });
     const clientTools = toolsEnabled ? params.clientTools : undefined;
@@ -1943,7 +2045,7 @@ export async function runEmbeddedAttempt(
       workspaceDir: effectiveWorkspace,
       defaultThinkLevel: params.thinkLevel,
       reasoningLevel: params.reasoningLevel ?? "off",
-      extraSystemPrompt: params.extraSystemPrompt,
+      extraSystemPrompt: effectiveExtraSystemPrompt || undefined,
       ownerNumbers: params.ownerNumbers,
       ownerDisplay: ownerDisplay.ownerDisplay,
       ownerDisplaySecret: ownerDisplay.ownerDisplaySecret,

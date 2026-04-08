@@ -56,7 +56,7 @@ import { normalizeAssistantIdentity } from "./assistant-identity.ts";
 import { exportChatMarkdown } from "./chat/export.ts";
 import { loadAssistantIdentity as loadAssistantIdentityInternal } from "./controllers/assistant-identity.ts";
 import type { DevicePairingList } from "./controllers/devices.ts";
-import type { ExecApprovalRequest } from "./controllers/exec-approval.ts";
+import { pruneExecApprovalQueue, type ExecApprovalRequest } from "./controllers/exec-approval.ts";
 import type { ExecApprovalsFile, ExecApprovalsSnapshot } from "./controllers/exec-approvals.ts";
 import type { SkillMessage } from "./controllers/skills.ts";
 import type { GatewayBrowserClient, GatewayHelloOk } from "./gateway.ts";
@@ -651,6 +651,7 @@ export class OpenClawApp extends LitElement {
   }
 
   async handleExecApprovalDecision(decision: "allow-once" | "allow-always" | "deny") {
+    this.execApprovalQueue = pruneExecApprovalQueue(this.execApprovalQueue);
     const active = this.execApprovalQueue[0];
     if (!active || !this.client || this.execApprovalBusy) {
       return;
@@ -664,7 +665,12 @@ export class OpenClawApp extends LitElement {
       });
       this.execApprovalQueue = this.execApprovalQueue.filter((entry) => entry.id !== active.id);
     } catch (err) {
-      this.execApprovalError = `Exec approval failed: ${String(err)}`;
+      const message = String(err);
+      if (message.toLowerCase().includes("unknown or expired approval id")) {
+        // If this prompt expired or was resolved elsewhere, drop it so the UI can move on.
+        this.execApprovalQueue = this.execApprovalQueue.filter((entry) => entry.id !== active.id);
+      }
+      this.execApprovalError = `Exec approval failed: ${message}`;
     } finally {
       this.execApprovalBusy = false;
     }

@@ -131,6 +131,7 @@ function extractAgentIdFromAbsoluteSessionPath(candidateAbsPath: string): string
 function resolveStructuralSessionFallbackPath(
   candidateAbsPath: string,
   expectedAgentId: string,
+  baseSessionsDir: string,
 ): string | undefined {
   const parsed = resolveAgentSessionsPathParts(candidateAbsPath);
   if (!parsed) {
@@ -157,7 +158,11 @@ function resolveStructuralSessionFallbackPath(
   if (!fileName || fileName === "." || fileName === "..") {
     return undefined;
   }
-  return path.normalize(path.resolve(candidateAbsPath));
+  const siblingSessionsDir = resolveSiblingAgentSessionsDir(baseSessionsDir, normalizedAgentId);
+  if (siblingSessionsDir) {
+    return path.join(path.resolve(siblingSessionsDir), fileName);
+  }
+  return path.join(resolveAgentSessionsDir(normalizedAgentId), fileName);
 }
 
 function safeRealpathSync(filePath: string): string | undefined {
@@ -182,7 +187,22 @@ function resolvePathWithinSessionsDir(
   // Normalize absolute paths that are within the sessions directory.
   // Older versions stored absolute sessionFile paths in sessions.json;
   // convert them to relative so the containment check passes.
-  const realTrimmed = path.isAbsolute(trimmed) ? (safeRealpathSync(trimmed) ?? trimmed) : trimmed;
+  const realTrimmed = (() => {
+    if (!path.isAbsolute(trimmed)) {
+      return trimmed;
+    }
+    const directRealpath = safeRealpathSync(trimmed);
+    if (directRealpath) {
+      return directRealpath;
+    }
+    // Handle paths to not-yet-created files under an existing real directory
+    // (for example /private/... aliases on macOS temp dirs).
+    const parentRealpath = safeRealpathSync(path.dirname(trimmed));
+    if (parentRealpath) {
+      return path.join(parentRealpath, path.basename(trimmed));
+    }
+    return trimmed;
+  })();
   const normalized = path.isAbsolute(realTrimmed)
     ? path.relative(realBase, realTrimmed)
     : realTrimmed;
@@ -220,6 +240,7 @@ function resolvePathWithinSessionsDir(
       const structuralFallback = resolveStructuralSessionFallbackPath(
         realTrimmed,
         extractedAgentId,
+        realBase,
       );
       if (structuralFallback) {
         return structuralFallback;

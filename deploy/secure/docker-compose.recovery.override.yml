@@ -1,0 +1,14 @@
+# Recovery cutover: bind a fresh OpenClaw home (prepared under /root/.openclaw-recovery on the host).
+# Use with the secure stack from deploy/secure:
+#
+#   docker compose -f docker-compose.secure.yml -f docker-compose.recovery.override.yml up -d
+#
+# Do not commit host-specific paths; copy this file on the server and adjust RECOVERY_HOME if needed.
+
+services:
+  openclaw:
+    env_file:
+      - ${RECOVERY_HOME:-/root/.openclaw-recovery}/secure-mvp.env
+    volumes:
+      - ${RECOVERY_HOME:-/root/.openclaw-recovery}:/home/node/.openclaw
+      - ${RECOVERY_HOME:-/root/.openclaw-recovery}/workspace:/home/node/.openclaw/workspace

@@ -31,10 +31,10 @@ describe("Dockerfile", () => {
     expect(installIndex).toBeGreaterThan(-1);
     expect(browserArgIndex).toBeGreaterThan(-1);
     expect(browserArgIndex).toBeGreaterThan(installIndex);
-    expect(dockerfile).toContain(
-      "node /app/node_modules/playwright-core/cli.js install --with-deps chromium",
-    );
-    expect(dockerfile).toContain("apt-get install -y --no-install-recommends xvfb");
+    expect(dockerfile).toContain("node /app/node_modules/playwright-core/cli.js install chromium");
+    expect(dockerfile).toContain("apt-get install -y --no-install-recommends \\");
+    expect(dockerfile).toContain("libnss3 \\");
+    expect(dockerfile).toContain("xvfb && \\");
   });
 
   it("prunes runtime dependencies after the build stage", async () => {

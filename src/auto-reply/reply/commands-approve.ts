@@ -28,6 +28,16 @@ type ParsedApproveCommand =
   | { ok: true; id: string; decision: "allow-once" | "allow-always" | "deny" }
   | { ok: false; error: string };
 
+function normalizeApprovalId(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return "";
+  }
+  const withoutLabels = trimmed.replace(/^(?:id|approval|approval-id)\s*[:=]\s*/i, "");
+  const withoutWrappers = withoutLabels.replace(/^[`"'“”‘’<([]+|[`"'“”‘’>)\].,;:!?]+$/g, "");
+  return withoutWrappers.trim();
+}
+
 function parseApproveCommand(raw: string): ParsedApproveCommand | null {
   const trimmed = raw.trim();
   if (FOREIGN_COMMAND_MENTION_REGEX.test(trimmed)) {
@@ -50,17 +60,25 @@ function parseApproveCommand(raw: string): ParsedApproveCommand | null {
   const second = tokens[1].toLowerCase();
 
   if (DECISION_ALIASES[first]) {
+    const id = normalizeApprovalId(tokens.slice(1).join(" "));
+    if (!id) {
+      return { ok: false, error: "Usage: /approve <id> allow-once|allow-always|deny" };
+    }
     return {
       ok: true,
       decision: DECISION_ALIASES[first],
-      id: tokens.slice(1).join(" ").trim(),
+      id,
     };
   }
   if (DECISION_ALIASES[second]) {
+    const id = normalizeApprovalId(tokens[0]);
+    if (!id) {
+      return { ok: false, error: "Usage: /approve <id> allow-once|allow-always|deny" };
+    }
     return {
       ok: true,
       decision: DECISION_ALIASES[second],
-      id: tokens[0],
+      id,
     };
   }
   return { ok: false, error: "Usage: /approve <id> allow-once|allow-always|deny" };
@@ -134,10 +152,16 @@ export const handleApproveCommand: CommandHandler = async (params, allowTextComm
       mode: GATEWAY_CLIENT_MODES.BACKEND,
     });
   } catch (err) {
+    const errorText = String(err);
+    const suffix =
+      errorText.toLowerCase().includes("unknown or expired approval id") ||
+      errorText.toLowerCase().includes("approval expired")
+        ? " The request may already be resolved/expired. Re-run the command from the latest approval prompt."
+        : "";
     return {
       shouldContinue: false,
       reply: {
-        text: `❌ Failed to submit approval: ${String(err)}`,
+        text: `❌ Failed to submit approval: ${errorText}${suffix}`,
       },
     };
   }

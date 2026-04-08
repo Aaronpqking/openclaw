@@ -1,0 +1,53 @@
+# Parallel recovery gateway: separate service + host port + exclusive recovery bind.
+# Does not stop or recreate the primary `openclaw` service.
+#
+# Prerequisite: prepare recovery home (see WHATSAPP_RECOVERY_RUNBOOK.md).
+#
+#   eval "$(./deploy/secure/scripts/resolve-openclaw-host-home.sh)"
+#   export RECOVERY_HOME   # optional override
+#   docker compose -f docker-compose.secure.yml -f docker-compose.recovery-parallel.yml up -d openclaw-recovery
+#
+# Probe gateway (host): http://127.0.0.1:18790  (maps to container :18789)
+#
+# RECOVERY_HOME must NOT be the same path as the primary ${HOME}/.openclaw bind (no shared RW).
+
+services:
+  openclaw-recovery:
+    image: openclaw:secure-mvp
+    init: true
+    restart: unless-stopped
+    container_name: secure-openclaw-recovery-1
+    command: ["node", "dist/index.js", "gateway", "--bind", "lan", "--port", "18789"]
+    expose:
+      - "18789"
+    ports:
+      - "127.0.0.1:${OPENCLAW_RECOVERY_HOST_PORT:-18790}:18789"
+    env_file:
+      - ${RECOVERY_HOME:?set RECOVERY_HOME to the fresh recovery home path}/secure-mvp.env
+    environment:
+      HOME: /home/node
+      XDG_CONFIG_HOME: /home/node/.openclaw/xdg-config
+      PLAYWRIGHT_BROWSERS_PATH: /home/node/.openclaw/ms-playwright
+      TERM: xterm-256color
+      OPENCLAW_GATEWAY_TOKEN: ""
+      OPENCLAW_GATEWAY_PASSWORD: ""
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=256m
+      - /run:rw,noexec,nosuid,nodev,size=16m
+    security_opt:
+      - no-new-privileges:true
+      - apparmor=docker-default
+    cap_drop:
+      - ALL
+    volumes:
+      - ${RECOVERY_HOME}:/home/node/.openclaw
+      - ${RECOVERY_HOME}/workspace:/home/node/.openclaw/workspace
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:18789/healthz >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      - secure_internal
