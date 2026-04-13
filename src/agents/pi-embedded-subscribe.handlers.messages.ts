@@ -6,6 +6,10 @@ import { emitAgentEvent } from "../infra/agent-events.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { createInlineCodeState } from "../markdown/code-spans.js";
 import {
+  buildAnswerPolicyReviewPayload,
+  shouldLogAnswerPolicyReviewSample,
+} from "./answer-policy-review.js";
+import {
   isMessagingToolDuplicateNormalized,
   normalizeTextForComparison,
 } from "./pi-embedded-helpers.js";
@@ -23,6 +27,7 @@ import {
   formatReasoningMessage,
   promoteThinkingTagsToBlocks,
 } from "./pi-embedded-utils.js";
+import type { RequestClassification } from "./request-classifier.js";
 import { peekRetrievalTraceForRun, type RetrievalTraceSnapshot } from "./retrieval-trace.js";
 
 const answerPolicyLog = createSubsystemLogger("agents/answer-policy");
@@ -76,6 +81,7 @@ export function applyVerifiedAnswerPolicy(params: {
   verification_status: "verified" | "unverified" | "source_unavailable";
   task_completed_verified: boolean;
   reason: "none" | "freshness_unverified" | "completion_unverified";
+  limitation_note?: string;
 } {
   const baseText = params.text.trim();
   const freshnessRequired = params.retrievalTrace?.freshness_required === true;
@@ -87,14 +93,16 @@ export function applyVerifiedAnswerPolicy(params: {
       verificationStatus === "source_unavailable"
         ? " Live source verification was unavailable in this run."
         : "";
+    const limitationNote = `I couldn't verify this against a live source in this run, so I can't provide a confirmed current-state answer.${unavailableSuffix}`;
     return {
-      text: `I couldn't verify this against a live source in this run, so I can't provide a confirmed current-state answer.${unavailableSuffix}`,
-      policy_enforced: true,
+      text: params.text,
+      policy_enforced: false,
       answer_truthfulness_mode: "guarded_unverified",
       freshness_required: freshnessRequired,
       verification_status: verificationStatus,
       task_completed_verified: taskCompletedVerified,
       reason: "freshness_unverified",
+      limitation_note: limitationNote,
     };
   }
 
@@ -118,6 +126,7 @@ export function applyVerifiedAnswerPolicy(params: {
     verification_status: verificationStatus,
     task_completed_verified: taskCompletedVerified,
     reason: "none",
+    limitation_note: undefined,
   };
 }
 
@@ -157,6 +166,42 @@ export function buildAssistantStreamData(params: {
     delta: params.delta ?? "",
     mediaUrls: mediaUrls.length ? mediaUrls : undefined,
   };
+}
+
+export function emitAnswerPolicyReviewEvent(params: {
+  runId: string;
+  requestClassification: RequestClassification;
+  classificationReason: string;
+  freshnessRequired: boolean;
+  verificationStatus: "verified" | "unverified" | "source_unavailable";
+  limitationNoteApplied: boolean;
+  responseOverridden: boolean;
+  hasMixedIntentSignal: boolean;
+  onAgentEvent?: (evt: { stream: string; data: Record<string, unknown> }) => void | Promise<void>;
+}) {
+  const reviewPayload = buildAnswerPolicyReviewPayload({
+    runId: params.runId,
+    requestClassification: params.requestClassification,
+    classificationReason: params.classificationReason,
+    freshnessRequired: params.freshnessRequired,
+    verificationStatus: params.verificationStatus,
+    limitationNoteApplied: params.limitationNoteApplied,
+    responseOverridden: params.responseOverridden,
+    hasMixedIntentSignal: params.hasMixedIntentSignal,
+  });
+  emitAgentEvent({
+    runId: params.runId,
+    stream: "answer_policy_review",
+    data: reviewPayload,
+  });
+  void params.onAgentEvent?.({
+    stream: "answer_policy_review",
+    data: reviewPayload,
+  });
+  if (shouldLogAnswerPolicyReviewSample(reviewPayload)) {
+    answerPolicyLog.info(`answer_policy_review ${JSON.stringify(reviewPayload)}`);
+  }
+  return reviewPayload;
 }
 
 export function handleMessageStart(
@@ -402,6 +447,15 @@ export function handleMessageEnd(
     mediaUrls = [];
     hasMedia = false;
   }
+  const limitationNoteText = policy.limitation_note?.trim() ?? "";
+  if (!policy.policy_enforced && limitationNoteText) {
+    const appendNote = (value: string) => {
+      const trimmed = value.trim();
+      return trimmed ? `${trimmed}\n\n${limitationNoteText}` : limitationNoteText;
+    };
+    text = appendNote(text);
+    cleanedText = appendNote(cleanedText);
+  }
   const answerPolicyData = {
     phase: "answer_policy",
     freshness_required: policy.freshness_required,
@@ -410,8 +464,14 @@ export function handleMessageEnd(
     answer_truthfulness_mode: policy.answer_truthfulness_mode,
     policy_enforced: policy.policy_enforced,
     reason: policy.reason,
+    limitation_note: limitationNoteText || undefined,
+    limitation_note_applied: Boolean(limitationNoteText),
+    verification_attempted: policy.freshness_required,
+    verification_available: policy.verification_status === "verified",
     requested_model: retrievalTrace?.requested_model ?? "unknown",
     resolved_model: retrievalTrace?.resolved_model ?? "unknown",
+    request_classification: retrievalTrace?.request_classification ?? "stable_general_knowledge",
+    classification_reason: retrievalTrace?.classification_reason ?? "unknown",
   };
   emitAgentEvent({
     runId: ctx.params.runId,
@@ -425,6 +485,18 @@ export function handleMessageEnd(
   answerPolicyLog.info(
     `answer_policy ${JSON.stringify({ run_id: ctx.params.runId, ...answerPolicyData })}`,
   );
+
+  emitAnswerPolicyReviewEvent({
+    runId: ctx.params.runId,
+    requestClassification: retrievalTrace?.request_classification ?? "stable_general_knowledge",
+    classificationReason: retrievalTrace?.classification_reason ?? "unknown",
+    freshnessRequired: policy.freshness_required,
+    verificationStatus: policy.verification_status,
+    limitationNoteApplied: Boolean(limitationNoteText),
+    responseOverridden: policy.policy_enforced,
+    hasMixedIntentSignal: retrievalTrace?.has_mixed_intent_signal ?? false,
+    onAgentEvent: ctx.params.onAgentEvent,
+  });
 
   if (!cleanedText && !hasMedia && !ctx.params.enforceFinalTag) {
     const rawTrimmed = rawText.trim();

@@ -1,3 +1,5 @@
+import { classifyRequest, type RequestClassification } from "./request-classifier.js";
+
 type RetrievalLayer =
   | "active_conversation"
   | "recent_session_cache"
@@ -24,6 +26,9 @@ export type RetrievalTraceSnapshot = {
   requested_model: string;
   resolved_model: string;
   retrieval_policy_version: string;
+  request_classification: RequestClassification;
+  classification_reason: string;
+  has_mixed_intent_signal: boolean;
 };
 
 type RetrievalTraceState = RetrievalTraceSnapshot & {
@@ -59,27 +64,9 @@ function resolveInitialState(params: {
   requestedModel?: string;
   resolvedModel?: string;
 }): RetrievalTraceState {
-  const normalized = params.prompt?.trim().toLowerCase() ?? "";
-  const sourceSpecificCue =
-    /\b(email|gmail|inbox|mailbox|calendar|drive|document|doc|message|slack|quinn)\b/.test(
-      normalized,
-    );
-  const memoryRecallCue =
-    /\b(memory|remember|recall|saved|notes?|memory file|daily file|memproof|phrase|token)\b/.test(
-      normalized,
-    );
-  const browserActionCue =
-    /\b(browser|page|tab|upload|click|open https?:\/\/|navigate|current page)\b/.test(normalized);
-  const freshnessCue =
-    /\b(today|latest|currently|right now|time-sensitive)\b/.test(normalized) ||
-    /\bcurrent (?:status|state|health|deployment|runtime|readiness)\b/.test(normalized);
-  const operationalStateCue =
-    /\b(status|state|healthy|health|readyz|healthz|deployed|deployment|running|connected|linked|available|availability|reachable|working)\b/.test(
-      normalized,
-    );
-  const expectsSource =
-    sourceSpecificCue ||
-    (freshnessCue && operationalStateCue && !memoryRecallCue && !browserActionCue);
+  const normalizedPrompt = params.prompt ?? "";
+  const classification = classifyRequest({ prompt: normalizedPrompt });
+  const expectsSource = classification.classification === "external_current_state_required";
   return {
     checked_layers: [...BASE_LAYERS],
     selected_layer: "active_conversation",
@@ -97,6 +84,9 @@ function resolveInitialState(params: {
     requested_model: normalizeModelLabel(params.requestedModel),
     resolved_model: normalizeModelLabel(params.resolvedModel),
     retrieval_policy_version: RETRIEVAL_POLICY_VERSION,
+    request_classification: classification.classification,
+    classification_reason: classification.reason,
+    has_mixed_intent_signal: classification.hasMixedIntentSignal,
   };
 }
 
@@ -250,6 +240,9 @@ function buildRetrievalTraceSnapshot(state: RetrievalTraceState): RetrievalTrace
     requested_model: state.requested_model,
     resolved_model: state.resolved_model,
     retrieval_policy_version: state.retrieval_policy_version,
+    request_classification: state.request_classification,
+    classification_reason: state.classification_reason,
+    has_mixed_intent_signal: state.has_mixed_intent_signal,
   };
 }
 

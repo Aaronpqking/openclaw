@@ -28,6 +28,8 @@ describe("retrieval trace", () => {
       requested_model: "openai/gpt-5.4-mini",
       resolved_model: "openai/gpt-5.4-mini",
       retrieval_policy_version: expect.stringContaining(".det-v1"),
+      request_classification: "external_current_state_required",
+      classification_reason: "source-specific live data request",
     });
   });
 
@@ -49,6 +51,8 @@ describe("retrieval trace", () => {
       freshness_required: true,
       verification_status: "verified",
       missing_expected_source: false,
+      request_classification: "external_current_state_required",
+      classification_reason: "source-specific live data request",
     });
   });
 
@@ -107,9 +111,25 @@ describe("retrieval trace", () => {
       freshness_required: true,
       requested_model: "openai/gpt-5.4",
       resolved_model: "openai/gpt-5.4",
+      request_classification: "external_current_state_required",
+      classification_reason: "source-specific live data request",
     });
     expect(finalized).toEqual(peeked);
     expect(peekRetrievalTraceForRun("run-peek")).toBeNull();
+  });
+
+  it("propagates mixed-intent classifier signal into retrieval trace", () => {
+    initializeRetrievalTraceForRun("run-mixed", {
+      prompt: "Summarize this email and tell me whether the sender is still the CEO today.",
+      requestedModel: "openai/gpt-5.4-mini",
+      resolvedModel: "openai/gpt-5.4-mini",
+    });
+    const trace = finalizeRetrievalTraceForRun("run-mixed");
+    expect(trace).toMatchObject({
+      request_classification: "external_current_state_required",
+      has_mixed_intent_signal: true,
+      freshness_required: true,
+    });
   });
 
   it("does not require live verification for same-day memory recall prompts", () => {
