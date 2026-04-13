@@ -1,4 +1,12 @@
 {
+  "agents": {
+    "defaults": {
+      "heartbeat": {
+        "every": "0m",
+        "target": "none"
+      }
+    }
+  },
   "commands": {
     "nativeSkills": false,
     "bash": false,

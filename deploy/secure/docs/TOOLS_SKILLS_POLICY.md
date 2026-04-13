@@ -1,33 +1,78 @@
 # Tools and Skills Policy
 
-This policy pack adds the enforceable subset of the WhatsApp-oriented zero-trust model without clobbering an existing `agents.list`.
+This policy pack defines an explicit runtime role split:
 
-Primary fragment:
+- ingress runtime: hardened, non-operator, no Gog
+- operator runtime: heartbeat + Gog + approval-aware exec
+
+Ingress fragment:
 
 - `deploy/secure/openclaw/tools-skills.zero-trust.fragment.json`
 
-Optional WhatsApp + coding overlay:
+Operator fragment:
 
 - `deploy/secure/openclaw/whatsapp-coding.fragment.json`
 
-## What the fragment enforces
+## Ingress runtime posture
 
 - `tools.profile: "minimal"` starts from `session_status` only.
-- `tools.alsoAllow` adds reviewed tools on top of the `minimal` profile without collapsing the toolset to `session_status`.
-- `tools.deny` in the zero-trust fragment blocks `group:fs`, `group:runtime`, `canvas`, and `gateway` (it does **not** deny `message`, so you can combine overlays that allow WhatsApp sends). The WhatsApp overlay additionally denies `gateway` and `canvas` while keeping `message` available for allowlisted operators.
+- `tools.alsoAllow` is restricted to ingress operations (`group:web`, `browser`, `nodes`, `cron`).
+- `tools.deny` blocks mutation-heavy surfaces (`group:fs`, `group:runtime`, `canvas`, `gateway`).
+- `agents.defaults.heartbeat.every = 0m` and `target = none` keeps ingress non-operator.
+- `skills.allowBundled: []` keeps Gog disabled.
 - `browser.evaluateEnabled: false` disables browser JS eval and `wait --fn`.
 - `commands.nativeSkills: false` disables native skill command registration.
 - `commands.bash`, `commands.config`, `commands.mcp`, `commands.plugins`, `commands.debug`, and `commands.restart` stay off.
-- `skills.allowBundled: []` blocks bundled skills by default.
 - `skills.load.extraDirs: []` and `skills.load.watch: false` remove extra skill roots and live skill refresh.
 
-## What it does not enforce
+Ingress runtime is never evaluated as operator-green.
+
+## Operator runtime posture
+
+The operator fragment is the source of truth for operator behavior:
+
+- heartbeat enabled at `2h`
+- heartbeat delivery to WhatsApp plus gateway-side indicator events
+- Gog skill enabled
+- exec baseline fixed to `host=gateway`, `security=allowlist`, `ask=on-miss`
+- strict green gate: partial status is never promoted to green
+
+## What this policy does not bypass
 
 - It does not replace `agents.list`, so per-agent least-privilege splits remain an operator step.
 - It does not disable managed or workspace skills globally. OpenClaw only exposes a bundled-skill allowlist; `~/.openclaw/skills` and `<workspace>/skills` remain a residual risk.
-- It does not hard-split `gog` into read-only versus write-capable operations. That still needs approvals and process controls.
+- It does not bypass exec approvals for Gog. Gog remains approval-aware via allowlist + on-miss.
 - It does not set `plugins.allow` because unknown plugin ids are validation errors, and install-on-demand plugins such as WhatsApp may not be present yet.
 - `tools.elevated` only changes exec placement when the agent is sandboxed; it is not a replacement for gateway or node exec approvals.
+
+## Gog approval persistence (operator runtime)
+
+Use allowlist + on-miss as the baseline, then persist only safe Gog patterns via allow-always once approved.
+
+Safe-to-persist examples:
+
+- `gog auth list`
+- `gog gmail labels`
+- `gog gmail search ... --max <bounded>`
+- `gog calendar events ... --max <bounded>`
+- `gog drive list ... --max <bounded>`
+
+Do not persist broad or opaque wrappers:
+
+- shell wrappers (`sh -c`, chained scripts, unknown binaries)
+- commands with unbounded result expansion
+- commands that include unrelated binary execution
+
+Storage and audit path:
+
+- approvals file: `~/.openclaw/exec-approvals.json`
+- audit context: allowlist entry metadata (`lastUsedAt`, `lastUsedCommand`, `lastResolvedPath`)
+
+Revocation path:
+
+```bash
+openclaw approvals allowlist remove --gateway "/absolute/path/or-pattern"
+```
 
 ## Optional WhatsApp channel policy
 
@@ -96,7 +141,7 @@ Examples:
 - `["wacli"]` if you intentionally want the WhatsApp CLI skill
 - `["peekaboo"]` only if the host really needs screenshot capture
 
-Secure compose defaults skip compiling and installing `gog` (`OPENCLAW_BUILD_GOG=0`, `OPENCLAW_INSTALL_GOG=0`) to keep Docker builds small. Set both to `1` when you need the Google Workspace `gog` CLI in the image. Browser runtime is **off** by default in secure compose (`OPENCLAW_INSTALL_BROWSER=0`) so image builds avoid apt + Playwright Chromium; set `OPENCLAW_INSTALL_BROWSER=1` when you need bundled browser tools.
+Secure compose defaults skip compiling and installing `gog` (`OPENCLAW_BUILD_GOG=0`, `OPENCLAW_INSTALL_GOG=0`) to keep Docker builds small. Set both to `1` on the operator runtime only. Browser runtime is **off** by default in secure compose (`OPENCLAW_INSTALL_BROWSER=0`) so image builds avoid apt + Playwright Chromium; set `OPENCLAW_INSTALL_BROWSER=1` only where needed.
 
 Do not enable marketplace or third-party skills in production until they are reviewed.
 

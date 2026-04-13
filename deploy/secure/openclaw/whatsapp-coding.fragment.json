@@ -1,5 +1,22 @@
 {
+  "agents": {
+    "defaults": {
+      "heartbeat": {
+        "every": "2h",
+        "target": "whatsapp",
+        "to": "+15551234567",
+        "directPolicy": "allow"
+      }
+    }
+  },
   "channels": {
+    "defaults": {
+      "heartbeat": {
+        "showOk": false,
+        "showAlerts": true,
+        "useIndicator": true
+      }
+    },
     "whatsapp": {
       "dmPolicy": "allowlist",
       "allowFrom": ["+15551234567"],
@@ -39,6 +56,11 @@
       "browser"
     ],
     "deny": ["gateway", "canvas"],
+    "exec": {
+      "host": "gateway",
+      "security": "allowlist",
+      "ask": "on-miss"
+    },
     "elevated": {
       "enabled": true,
       "allowFrom": {

@@ -3,6 +3,7 @@
 - Build one unified operator snapshot across Slack, WhatsApp, calendar, email, and active workstreams.
 - Use deltas only: summarize only new/changed signal since the previous heartbeat window (fallback window: last 24h).
 - Never replay full histories. If data is unavailable, say unavailable.
+- If delivery target resolves to none or no-target, report runtime degraded and include the failing target path.
 
 ## Calendar delta logic
 

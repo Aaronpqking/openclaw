@@ -496,3 +496,24 @@ WHATSAPP_NO_DUPLICATE_PROOF_THIS_TURN: UNPROVEN
 PRIMARY_BLOCKER: Live inbound duplicate/echo certification for the newly mounted inbound dedupe path is not yet captured post-deploy.
 FAST_PATH_TO_GREEN: Capture one controlled owner-device inbound and verify exactly one inbound handling path plus one outbound reply with no duplicate/echo.
 GOLDEN_PATH_TO_FULL_STANDARD: Keep no-build hotfix deploy path, preserve creds backup rotation, and roll this hardening into next disk-safe image bake.
+
+## 26. Role-Split and Strict-Green Addendum
+
+Going forward this report adopts explicit split-runtime policy:
+
+- ingress runtime and operator runtime are separate roles
+- ingress runtime is never operator-green
+- operator-green requires all critical gates, not partial success
+
+Critical gates for operator-green:
+
+1. scheduler tick observed in current window
+2. heartbeat run observed in current window
+3. heartbeat resolves non-none destination
+4. outbound delivery confirmed
+5. active provider auth valid for heartbeat model
+6. Gog installed and enabled where intended
+7. Gog exec path succeeds through allowlist + approval policy
+8. repeated approved Gog pattern does not re-prompt
+
+If any critical gate fails, final status remains non-green.
