@@ -25,7 +25,7 @@ Do not treat ingress runtime as operator-green.
 - Purpose: autonomous operator workflow execution.
 - Tools: includes `exec`, `process`, memory/session tools, browser as needed.
 - Skills: Gog enabled.
-- Heartbeat: enabled at `2h`; sends to WhatsApp and emits gateway indicator events.
+- Heartbeat: enabled at `2h`; outbound target is WhatsApp, and gateway only receives indicator/event visibility.
 - Exec baseline: `host=gateway`, `security=allowlist`, `ask=on-miss`.
 - Green policy: strict; any failed critical gate blocks green.
 

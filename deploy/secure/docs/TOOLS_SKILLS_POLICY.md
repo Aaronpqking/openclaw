@@ -32,7 +32,7 @@ Ingress runtime is never evaluated as operator-green.
 The operator fragment is the source of truth for operator behavior:
 
 - heartbeat enabled at `2h`
-- heartbeat delivery to WhatsApp plus gateway-side indicator events
+- heartbeat outbound destination is WhatsApp only; gateway receives indicator/event visibility only
 - Gog skill enabled
 - exec baseline fixed to `host=gateway`, `security=allowlist`, `ask=on-miss`
 - strict green gate: partial status is never promoted to green
